@@ -3,5 +3,5 @@ data = load_data_custom_cslu("data_cslu_splits/all/data/spontaneous/all_ages_all
 print(data)
 test_data = data['test']
 print(test_data)
-feats = test_data['features']
-print(feats['input_features'][0].shape)
+feats = test_data['input_features']
+print(feats[0].shape) 
