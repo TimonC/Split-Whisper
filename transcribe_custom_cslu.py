@@ -42,6 +42,10 @@ def transcribe(args):
     testsets = {}
     for ds in args.data_splits:
         testset = load_data_custom_cslu(os.path.join(data_path, ds), mode="test")
+
+        testset = testset.cast_column("audio_path", Audio())
+        testset = testset.rename_column("audio_path", "audio")
+
         testset = testset['test']
         testsets[ds] = testset
     # Prepare output directory
