@@ -18,13 +18,13 @@ def transcribe(args):
         finetuned_model += "-en"
     finetuned_model += "-myst"
 
-    if args.split_whisper_path is not None:
-        finetuned_model = args.split_whisper_path
-        finetuned_model_name = os.path.basename(finetuned_model)
-    else:
-        finetuned_model_name = finetuned_model
     if args.using_base_whisper:
         finetuned_model = base_model
+        
+    if args.split_whisper_path is not None:
+        finetuned_model = args.split_whisper_path
+    
+    finetuned_model_name = os.path.basename(finetuned_model)
     
 
 
@@ -101,7 +101,7 @@ def transcribe(args):
         }
 
     # Save final summary
-    results_dir = os.path.join(results_dir, args.json_option) 
+    results_dir = os.path.join(args.results_dir, args.json_option) 
     os.makedirs(results_dir, exist_ok=True)
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M")
     summary_path = os.path.join(results_dir, f"{finetuned_model_name}_{timestamp}.json")
