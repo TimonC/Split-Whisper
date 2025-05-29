@@ -8,6 +8,7 @@ from load_data_custom_cslu import load_data_custom_cslu
 import argparse
 from datasets import Dataset, load_dataset, Audio
 import json 
+from datetime import datetime
 def transcribe(args):
     # Construct model names based on args
     base_model = f"{args.base_model}-{args.whisper_size}"
@@ -88,7 +89,9 @@ def transcribe(args):
         }
 
     # Save final summary
-    summary_path = os.path.join(transcription_dir, "transcription_summary.json")
+    os.makedirs(args.output_dir, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M")
+    summary_path = os.path.join(args.output_dir, f"{timestamp}.json")
     with open(summary_path, "w") as summary_file:
         json.dump(results_summary, summary_file, indent=2)
 
@@ -104,8 +107,7 @@ if __name__ == "__main__":
     parser.add_argument("--data_path", type=str, default="./data_cslu_splits")
     parser.add_argument("--json_option", type=str, default="all")
     parser.add_argument("--cslu_option", type=str, default="scripted")
-    parser.add_argument("--output_dir", type=str, default="./fine-tuned-whisper")
-
+    parser.add_argument("--results_dir", type=str, default="./results")
     parser.add_argument("--data_splits", type=str, nargs='+', default=["all_genders_all_ages", "older_all_ages", "younger_all_ages"])
     args = parser.parse_args()
 
