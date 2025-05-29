@@ -47,68 +47,68 @@ def transcribe(args):
         device="cuda",
         chunk_length_s=30,
     )
+    for cslu_option in ["scripted", "spontaneous"]:
+        # Load in test data
+        data_path = os.path.join(args.data_path, args.json_option, "data", cslu_option)
+        print(f"Dataset: {data_path}")
+        print(f"Data splits: {args.data_splits}")
+        testsets = {}
+        for ds in args.data_splits:
+            testset = load_data_custom_cslu(os.path.join(data_path, ds), mode="test")
 
-    # Load in test data
-    data_path = os.path.join(args.data_path, args.json_option, "data", args.cslu_option)
-    print(f"Dataset: {data_path}")
-    print(f"Data splits: {args.data_splits}")
-    testsets = {}
-    for ds in args.data_splits:
-        testset = load_data_custom_cslu(os.path.join(data_path, ds), mode="test")
+            testset = testset.cast_column("audio_path", Audio())
+            testset = testset.rename_column("audio_path", "audio")
 
-        testset = testset.cast_column("audio_path", Audio())
-        testset = testset.rename_column("audio_path", "audio")
+            testset = testset['test']
+            testsets[ds] = testset
+        # Prepare output directory
+        transcription_dir = os.path.join("huggingface_models_transcription", finetuned_model, "transcriptions")
+        os.makedirs(transcription_dir, exist_ok=True)
+        print(testsets)
 
-        testset = testset['test']
-        testsets[ds] = testset
-    # Prepare output directory
-    transcription_dir = os.path.join("huggingface_models_transcription", finetuned_model, "transcriptions")
-    os.makedirs(transcription_dir, exist_ok=True)
-    print(testsets)
+        # Transcription loop
+        results_summary = {}
+        for testset_name, testset in testsets.items():
+            datasets = {"ground_truths": [], "hypotheses": []}
+            print(f"Transcribing {testset_name}")
+            transcription_file_path = os.path.join(transcription_dir, f"{testset_name}.txt")
 
-    # Transcription loop
-    results_summary = {}
-    for testset_name, testset in testsets.items():
-        datasets = {"ground_truths": [], "hypotheses": []}
-        print(f"Transcribing {testset_name}")
-        transcription_file_path = os.path.join(transcription_dir, f"{testset_name}.txt")
+            with open(transcription_file_path, "w") as transcription_file:
 
-        with open(transcription_file_path, "w") as transcription_file:
+                for out, line in tqdm(
+                    zip(pipe(KeyDataset(testset, "audio")), testset),
+                    desc=f"Transcribing {testset_name}",
+                    total=len(testset)
+                ):
+                    transcription = out["text"]
+                    ground_truth = line["sentence"]
+                    path = line["audio"]["path"]
+                    datasets["ground_truths"].append(normalizer(ground_truth))
+                    datasets["hypotheses"].append(normalizer(transcription))
+                    transcription_file.write(path + "\t" + transcription + "\n")
 
-            for out, line in tqdm(
-                zip(pipe(KeyDataset(testset, "audio")), testset),
-                desc=f"Transcribing {testset_name}",
-                total=len(testset)
-            ):
-                transcription = out["text"]
-                ground_truth = line["sentence"]
-                path = line["audio"]["path"]
-                datasets["ground_truths"].append(normalizer(ground_truth))
-                datasets["hypotheses"].append(normalizer(transcription))
-                transcription_file.write(path + "\t" + transcription + "\n")
+                # Compute and print WER
+            wer = metric.compute(predictions=datasets["hypotheses"], references=datasets["ground_truths"]) * 100
+            print(f"CSLU Option: {cslu_option} Dataset: {testset_name} WER: {wer:.2f}")
 
-            # Compute and print WER
-        wer = metric.compute(predictions=datasets["hypotheses"], references=datasets["ground_truths"]) * 100
-        print(f"Dataset: {testset_name} WER: {wer:.2f}")
+            # Store summary
+            results_summary[testset_name] = {
+                "wer": wer,
+                "model": finetuned_model_name,
+                "num_samples": len(testset),
+                "cslu_option": cslu_option,
+                "ground_truths": datasets["ground_truths"],
+                "hypotheses": datasets["hypotheses"]
+            }
 
-        # Store summary
-        results_summary[testset_name] = {
-            "wer": wer,
-            "model": finetuned_model_name,
-            "num_samples": len(testset),
-            "ground_truths": datasets["ground_truths"],
-            "hypotheses": datasets["hypotheses"]
-        }
+        # Save final summary
+        results_dir = os.path.join(args.results_dir, args.json_option) 
+        os.makedirs(results_dir, exist_ok=True)
+        summary_path = os.path.join(results_dir, f"{cslu_option}_{finetuned_model_name}.json")
+        with open(summary_path, "w") as summary_file:
+            json.dump(results_summary, summary_file, indent=2)
 
-    # Save final summary
-    results_dir = os.path.join(args.results_dir, args.json_option) 
-    os.makedirs(results_dir, exist_ok=True)
-    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M")
-    summary_path = os.path.join(results_dir, f"{finetuned_model_name}_{timestamp}.json")
-    with open(summary_path, "w") as summary_file:
-        json.dump(results_summary, summary_file, indent=2)
-
-    print(f"Saved transcription summary to {summary_path}")
+        print(f"Saved transcription summary to {summary_path}")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
