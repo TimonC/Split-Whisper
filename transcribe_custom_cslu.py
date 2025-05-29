@@ -16,7 +16,8 @@ def transcribe(args):
         base_model += ".en"
         finetuned_model += "-en"
     finetuned_model += "-myst"
-
+    if args.split_whisper:
+        fine_tuned_model += "-" + args.data_split
     print(f"Base model: {base_model}")
     print(f"Finetuned Model: {finetuned_model}")
 
@@ -73,6 +74,7 @@ if __name__ == "__main__":
     parser.add_argument("--whisper_language", type=str, default="english")
     parser.add_argument("--base_model", type=str, default="openai/whisper")
     parser.add_argument("--finetuned_model", type=str, default="aadel4/kid-whisper")
+    parser.add_argument("--split_whisper", type=bool, default=False)
     parser.add_argument("--data_path", type=str, default="./data_cslu_splits")
     parser.add_argument("--json_option", type=str, default="all")
     parser.add_argument("--cslu_option", type=str, default="scripted")
