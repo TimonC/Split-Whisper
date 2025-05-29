@@ -73,7 +73,7 @@ if __name__ == "__main__":
     parser.add_argument("--whisper_language", type=str, default="english")
     parser.add_argument("--base_model", type=str, default="openai/whisper")
     parser.add_argument("--finetuned_model", type=str, default="aadel4/kid-whisper")
-    parser.add_argument("--data_path", type=str, default="./cslu_data_splits")
+    parser.add_argument("--data_path", type=str, default="./data_cslu_splits")
     parser.add_argument("--json_option", type=str, default="all")
     parser.add_argument("--cslu_option", type=str, default="scripted")
     parser.add_argument("--data_split", type=str, default="all_genders_all_ages")
