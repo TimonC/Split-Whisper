@@ -9,41 +9,11 @@ import gc
 import os
 import argparse
 import shutil
-import whisper
-
-FRAME_DURATION = 160 / 16000.0  # 0.01s per frame
-
-_whisper_model = None
-
-def get_whisper_model(model_name="small.en"):
-    global _whisper_model
-    if _whisper_model is None:
-        _whisper_model = whisper.load_model(model_name)
-    return _whisper_model
-
-def seconds_to_frame(ts_s: float) -> int:
-    return int(ts_s / FRAME_DURATION)
-
-def get_word_frame_ranges(wav_path, model_name="small.en"):
-    model = get_whisper_model(model_name)
-    result = model.transcribe(wav_path, word_timestamps=True)
-    frame_ranges = []
-    for seg in result["segments"]:
-        for word in seg.get("words", []):
-            start_f = seconds_to_frame(word["start"])
-            end_f = seconds_to_frame(word["end"])
-            frame_ranges.append((start_f, end_f))
-    return frame_ranges
 
 def create_dataset(args):
-    base_model = args.base_model
-    if args.language=="english":
-        base_model += ".en"
-
-    print(f"Base model: {base_model}")
-    hf_base_model = "openai/whisper-" + base_model
-    feature_extractor = WhisperFeatureExtractor.from_pretrained(hf_base_model)
-    tokenizer = WhisperTokenizer.from_pretrained(hf_base_model, language="english", task="transcribe")
+    print(f"Base model: {args.base_model}")
+    feature_extractor = WhisperFeatureExtractor.from_pretrained(args.base_model)
+    tokenizer = WhisperTokenizer.from_pretrained(args.base_model, language="english", task="transcribe")
     normalizer = EnglishTextNormalizer()
 
     def prepare_dataset(batch):
@@ -52,7 +22,6 @@ def create_dataset(args):
         batch["sentence"] = normalizer(batch["sentence"])
         batch["labels"] = tokenizer(batch["sentence"]).input_ids
         batch["audio_path"] = batch["audio"]["path"]
-        batch["frame_ranges"] = get_word_frame_ranges(batch["audio"]["path"], base_model)
         return batch
 
     def create_empty_entry():
@@ -139,7 +108,7 @@ if __name__ == "__main__":
     parser.add_argument('--cslu_option', type=str, default="scripted")
     parser.add_argument('--json_version', type=str, default="all")
     parser.add_argument('--split', type=str, default="development")
-    parser.add_argument('--base_model', type=str, default="openai/whisper-small")
+    parser.add_argument('--base_model', type=str, default="aadel4/kid-whisper-medium-en-myst")
     parser.add_argument('--split_grade', type=int, default=4)
     parser.add_argument('--split_by_grade', action='store_true')
     parser.add_argument('--no_split_by_grade', action='store_false', dest='split_by_grade')

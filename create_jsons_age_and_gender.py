@@ -9,7 +9,7 @@ OUTPUT_DIR = os.path.join("data_cslu_splits", "gender")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 
-###Limit only to samples from 'https://github.com/vpspeech/ChildAugment/blob/main/CSLU_Trial_Finetune_Metadata/trial_list_combined_with_age_gender_abs'
+###This limits only to samples from 'https://github.com/vpspeech/ChildAugment/blob/main/CSLU_Trial_Finetune_Metadata/trial_list_combined_with_age_gender_abs'
 gender_lookup = {}
 valid_IDs = []
 input_file = 'trial_list_combined_with_age_gender_abs.txt'
