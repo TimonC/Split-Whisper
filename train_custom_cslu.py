@@ -9,15 +9,17 @@ import evaluate
 import argparse
 from datetime import datetime
 import os
-
+from load_data_custom_cslu import load_data_custom_cslu
 
 def get_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Fine-tune a Whisper model for ASR")
     parser.add_argument("--base_model", type=str, default="openai/whisper-small.en")
     parser.add_argument("--finetuned_model", type=str, default="aadel4/kid-whisper-small-en-myst")
     parser.add_argument("--using_base_whisper", action="store_true", default=False)
-    parser.add_argument("--dataset_path", type=str, default="./cslu_data_splits/data/scripted")
-    parser.add_argument("--dataset", type=str, default="all_genders_all_ages")
+    parser.add_argument("--data_path", type=str, default="./data_cslu_splits")
+    parser.add_argument("--json_option", type=str, default="all")
+    parser.add_argument("--cslu_option", type=str, default="scripted")
+    parser.add_argument("--data_split", type=str, default="all_genders_all_ages")
     parser.add_argument("--output_dir", type=str, default="./fine-tuned-whisper")
 
     parser.add_argument("--num_train_epochs", type=int, default=10)
@@ -71,21 +73,6 @@ class DataCollatorSpeechSeq2SeqWithPadding:
         return batch
 
 
-def load_data(dataset, dataset_path):
-    dataset_path = os.path.join(dataset_path, dataset)
-    print(f"Loading train dataset from {dataset_path}/train")
-    train_dataset = Dataset.load_from_disk(f"{dataset_path}/train")
-    print(f"Loading development dataset from {dataset_path}/development")
-    dev_dataset = Dataset.load_from_disk(f"{dataset_path}/development")
-
-    custom_dataset = DatasetDict({"train": train_dataset, "development": dev_dataset})
-
-    custom_dataset["train"] = custom_dataset["train"].shuffle()
-    custom_dataset["development"] = custom_dataset["development"]
-
-    print("Dataset prepared")
-    print(f"Found {len(custom_dataset['train'])} training examples and {len(custom_dataset['development'])} development examples")
-    return custom_dataset
 
 
 def train(args):
@@ -101,8 +88,8 @@ def train(args):
         finetuned_model = args.base_model
     else:
         finetuned_model = args.finetuned_model
-
-    custom_dataset = load_data(args.dataset, args.dataset_path)
+    dataset_path = os.path.join(args.data_path, args.json_option, args.cslu_option, "data", args.data_split)
+    custom_dataset = load_data_custom_cslu(dataset_path, mode="train")
 
     normalizer = tokenizer._normalize
     model = WhisperForConditionalGeneration.from_pretrained(finetuned_model)
@@ -131,8 +118,8 @@ def train(args):
         args.output_dir,
         finetuned_model.replace("/", "-"),
         f"lr_{args.max_learning_rate}_warmup_{args.warmup_steps}_epochs_{args.num_train_epochs}_batch_{args.train_batch_size}_grad_acc_{args.gradient_accumulation_steps}_max_steps_{args.max_steps}",
-        f"dataset_{args.dataset}",
-        datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        datetime.now().strftime("%Y-%m-%d_%H-%M-%S"),
+        f"dataset_{args.data_split}",
     )
     os.makedirs(output_dir, exist_ok=True)
 
