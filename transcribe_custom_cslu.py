@@ -104,7 +104,7 @@ def transcribe(args):
         # Save final summary
         results_dir = os.path.join(args.results_dir, args.json_option) 
         os.makedirs(results_dir, exist_ok=True)
-        summary_path = os.path.join(results_dir, f"{cslu_option}_{finetuned_model_name}.json")
+        summary_path = os.path.join(results_dir, cslu_option, f"{finetuned_model_name}.json")
         with open(summary_path, "w") as summary_file:
             json.dump(results_summary, summary_file, indent=2)
 

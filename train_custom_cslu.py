@@ -117,8 +117,6 @@ def train(args):
     output_dir = os.path.join(
         args.output_dir,
         finetuned_model.replace("/", "-"),
-        f"lr_{args.max_learning_rate}_warmup_{args.warmup_steps}_epochs_{args.num_train_epochs}_batch_{args.train_batch_size}_grad_acc_{args.gradient_accumulation_steps}_max_steps_{args.max_steps}",
-        datetime.now().strftime("%Y-%m-%d_%H-%M-%S"),
         f"{args.json_option}_dataset_{args.data_split}",
     )
     os.makedirs(output_dir, exist_ok=True)
