@@ -108,7 +108,7 @@ if __name__ == "__main__":
     parser.add_argument('--cslu_option', type=str, default="scripted")
     parser.add_argument('--json_version', type=str, default="all")
     parser.add_argument('--split', type=str, default="development")
-    parser.add_argument('--base_model', type=str, default="aadel4/kid-whisper-medium-en-myst")
+    parser.add_argument('--base_model', type=str, default="openai/whisper-small.en")
     parser.add_argument('--split_grade', type=int, default=4)
     parser.add_argument('--split_by_grade', action='store_true')
     parser.add_argument('--no_split_by_grade', action='store_false', dest='split_by_grade')
