@@ -37,7 +37,7 @@ def transcribe(args):
     )
 
     # Load in test data
-    data_path = os.path.join(args.data_path, args.json_option, "data-timeframe", args.cslu_option)
+    data_path = os.path.join(args.data_path, args.json_option, "data-timeframe", args.cslu_option, args.data_split)
     print(f"Dataset: {data_path}")
     testsets = load_data_custom_cslu(data_path, mode = "test")
 
