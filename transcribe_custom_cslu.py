@@ -52,25 +52,28 @@ def transcribe(args):
     os.makedirs(transcription_dir, exist_ok=True)
     print(testsets)
     # Transcription loop
-    for testset in testsets:
+    for testset_name, testset in testsets.items():
         datasets = {"ground_truths": [], "hypotheses": []}
-        print(f"Transcribing {testset}")
-        transcription_file_path = os.path.join(transcription_dir, f"{testset}.txt")
+        print(f"Transcribing {testset_name}")
+        transcription_file_path = os.path.join(transcription_dir, f"{testset_name}.txt")
 
-        with open(transcription_file_path, "w") as f:
-            for out, line in tqdm(zip(pipe(KeyDataset(testsets[testset], "audio")), testsets[testset]), desc=f"Transcribing {testset}", total=len(testsets[testset])):
+        with open(transcription_file_path, "w") as transcription_file:
+
+            for out, line in tqdm(
+                zip(pipe(KeyDataset(testset, "audio")), testset),
+                desc=f"Transcribing {testset_name}",
+                total=len(testset)
+            ):
                 transcription = out["text"]
                 ground_truth = line["sentence"]
                 path = line["audio"]["path"]
-
-                # Normalize and record
                 datasets["ground_truths"].append(normalizer(ground_truth))
                 datasets["hypotheses"].append(normalizer(transcription))
-                f.write(path + "\t" + transcription + "\n")
+                transcription_file.write(path + "\t" + transcription + "\n")
 
-        # Compute and print WER
+            # Compute and print WER
         wer = metric.compute(predictions=datasets["hypotheses"], references=datasets["ground_truths"]) * 100
-        print(f"Dataset: {testset} WER: {wer:.2f}%")
+        print(f"Dataset: {testset_name} WER: {wer:.2f}")
 
 
 if __name__ == "__main__":
