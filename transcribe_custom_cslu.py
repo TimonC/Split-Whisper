@@ -6,7 +6,7 @@ from tqdm import tqdm
 from transformers.pipelines.pt_utils import KeyDataset
 from load_data_custom_cslu import load_data_custom_cslu
 import argparse
-
+from datasets import Dataset, load_dataset, Audio
 
 def transcribe(args):
     # Construct model names based on args
@@ -16,8 +16,6 @@ def transcribe(args):
         base_model += ".en"
         finetuned_model += "-en"
     finetuned_model += "-myst"
-    if args.split_whisper:
-        fine_tuned_model += "-" + args.data_split
     print(f"Base model: {base_model}")
     print(f"Finetuned Model: {finetuned_model}")
 
@@ -38,10 +36,15 @@ def transcribe(args):
     )
 
     # Load in test data
-    data_path = os.path.join(args.data_path, args.json_option, "data-timeframe", args.cslu_option, args.data_split)
+    data_path = os.path.join(args.data_path, args.json_option, "data-timeframe", args.cslu_option)
     print(f"Dataset: {data_path}")
-    testsets = load_data_custom_cslu(data_path, mode = "test")
-
+    print(f"Data splits: {args.data_splits}")
+    testsets = []
+    for ds in args.data_splits:
+        testset = load_data_custom_cslu(os.path.join(data_path, ds), mode = "test")
+        testset = testset.cast_column("audio_path", Audio())
+        testset = testset.rename_column("audio_path", "audio")
+        testsets.append(testset)
     # Prepare output directory
     transcription_dir = os.path.join("huggingface_models_transcription", finetuned_model, "transcriptions")
     os.makedirs(transcription_dir, exist_ok=True)
@@ -78,8 +81,9 @@ if __name__ == "__main__":
     parser.add_argument("--data_path", type=str, default="./data_cslu_splits")
     parser.add_argument("--json_option", type=str, default="all")
     parser.add_argument("--cslu_option", type=str, default="scripted")
-    parser.add_argument("--data_split", type=str, default="all_genders_all_ages")
     parser.add_argument("--output_dir", type=str, default="./fine-tuned-whisper")
+
+    parser.add_argument("--data_split", type=str, nargs='+', default=["all_genders_all_ages", "older_all_ages", "younger_all_ages"])
     args = parser.parse_args()
 
     transcribe(args)
