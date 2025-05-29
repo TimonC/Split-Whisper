@@ -16,25 +16,31 @@ import argparse
 
 
 def transcribe(args):
-    print(f"Base model: {args.base_model}")
-    if "rishabh" in args.base_model.lower():
+    base_model = args.base_model + "-" + args.whisper_size
+    finetuned_model = args.finetuned_model + "-" + args.whisper_size
+    if args.whisper_language == "english":
+        base_model = base_model + ".en"
+        finetuned_model = base_model + ".en"
+    
+    print(f"Base model: {base_model}")
+    if "rishabh" in base_model.lower():
         normalizer = RishabhTextNormalizer
-        tokenizer = WhisperTokenizer.from_pretrained(args.base_model, language="english", task="transcribe")
+        tokenizer = WhisperTokenizer.from_pretrained(base_model, language=args.whisper_language, task="transcribe")
     else:
-        tokenizer = WhisperTokenizer.from_pretrained(args.base_model, language="english", task="transcribe")
+        tokenizer = WhisperTokenizer.from_pretrained(base_model, language=args.whisper_language, task="transcribe")
         normalizer = tokenizer._normalize
         
     metric = load("wer")
-    model = WhisperForConditionalGeneration.from_pretrained(args.base_model)
-    pipe = pipeline(task = "automatic-speech-recognition", model=model, tokenizer=args.base_model, feature_extractor=WhisperFeatureExtractor.from_pretrained(args.base_model), device="cuda", chunk_length_s=30,)
+    model = WhisperForConditionalGeneration.from_pretrained(finetuned_model)
+    pipe = pipeline(task = "automatic-speech-recognition", model=model, tokenizer=base_model, feature_extractor=WhisperFeatureExtractor.from_pretrained(base_model), device="cuda", chunk_length_s=30,)
     
     test_path = os.path.join(args.data_path, args.json_option, "data", args.cslu_option, "test")
-    print(f"Base model: {args.base_model}")
-    print(f"Finetuned Model: {args.finetuned_model}")
+    print(f"Base model: {base_model}")
+    print(f"Finetuned Model: {finetuned_model}")
     print(f"Test dataset: {test_path}")
     
     testsets = load_data_custom_cslu(test_path)
-    transcription_dir = args.finetuned_model + "/transcriptions"
+    transcription_dir = finetuned_model + "/transcriptions"
     if "fine-tuned-whisper" not in transcription_dir:
         transcription_dir = "huggingface_models_transcription/" + transcription_dir
     os.makedirs(transcription_dir, exist_ok=True)
@@ -57,8 +63,10 @@ def transcribe(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--base_model", type=str, default="openai/whisper-small.en")
-    parser.add_argument("--finetuned_model", type=str, default="openai/whisper-small.en")
+    parser.add_arguments("--whisper_size", type=str, default="small")
+    parser.add_arguments("--whisper_language", type=str, default="english")
+    parser.add_argument("--base_model", type=str, default="openai/whisper")
+    parser.add_argument("--finetuned_model", type=str, default="aadel4/kid-whisper-")
     parser.add_argument("--data_path", type=str, default="./cslu_data_splits")
     parser.add_argument("--json_option", type=str, default="all")
     parser.add_argument("--cslu_option", type=str, default="scripted")
