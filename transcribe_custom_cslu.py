@@ -20,7 +20,8 @@ def transcribe(args):
     finetuned_model = args.finetuned_model + "-" + args.whisper_size
     if args.whisper_language == "english":
         base_model = base_model + ".en"
-        finetuned_model = base_model + ".en"
+        finetuned_model = finetuned_model + "-en"
+    finetuned_model = finetuned_model + "-myst"
     
     print(f"Base model: {base_model}")
     if "rishabh" in base_model.lower():
