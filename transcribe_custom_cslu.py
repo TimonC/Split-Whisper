@@ -20,6 +20,9 @@ def transcribe(args):
     print(f"Base model: {base_model}")
     print(f"Finetuned Model: {finetuned_model}")
 
+    if args.using_base_whisper:
+        finetuned_model = base_model
+
     # Set up tokenizer and normalizer
     tokenizer = WhisperTokenizer.from_pretrained(base_model, language=args.whisper_language, task="transcribe")
     normalizer = tokenizer._normalize
@@ -109,6 +112,7 @@ if __name__ == "__main__":
     parser.add_argument("--cslu_option", type=str, default="scripted")
     parser.add_argument("--results_dir", type=str, default="./results")
     parser.add_argument("--data_splits", type=str, nargs='+', default=["all_genders_all_ages", "older_all_ages", "younger_all_ages"])
+    parser.add_argument("--using_base_whisper", action="store_true", default=False)
     args = parser.parse_args()
 
     transcribe(args)
