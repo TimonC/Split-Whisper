@@ -101,9 +101,10 @@ def transcribe(args):
         }
 
     # Save final summary
-    os.makedirs(args.results_dir, exist_ok=True)
+    results_dir = os.path.join(results_dir, args.json_option) 
+    os.makedirs(results_dir, exist_ok=True)
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M")
-    summary_path = os.path.join(args.args.results_dir, f"{finetuned_model_name}_{timestamp}.json")
+    summary_path = os.path.join(results_dir, f"{finetuned_model_name}_{timestamp}.json")
     with open(summary_path, "w") as summary_file:
         json.dump(results_summary, summary_file, indent=2)
 
