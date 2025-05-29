@@ -307,7 +307,7 @@ def train(args):
         load_best_model_at_end=True,
         metric_for_best_model="wer",
         greater_is_better=False,
-        push_to_hub=True,
+        push_to_hub=False,
     )
     trainer = Seq2SeqTrainer(
         args=training_args,
