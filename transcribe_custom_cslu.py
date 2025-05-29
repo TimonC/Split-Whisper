@@ -106,9 +106,9 @@ def transcribe(args):
             }
 
         # Save final summary
-        results_dir = os.path.join(args.results_dir, args.json_option) 
+        results_dir = os.path.join(args.results_dir, args.json_option, cslu_option) 
         os.makedirs(results_dir, exist_ok=True)
-        summary_path = os.path.join(results_dir, cslu_option, f"{finetuned_model_name}.json")
+        summary_path = os.path.join(results_dir, f"{finetuned_model_name}.json")
         with open(summary_path, "w") as summary_file:
             json.dump(results_summary, summary_file, indent=2)
 
@@ -124,7 +124,7 @@ if __name__ == "__main__":
     parser.add_argument("--data_path", type=str, default="./data_cslu_splits")
     parser.add_argument("--json_option", type=str, default="all")
     parser.add_argument("--results_dir", type=str, default="./results")
-    parser.add_argument("--cslu_options", type=str, nargs='+', default=["scripted", "spontaneous"])
+    parser.add_argument("--cslu_options", type=str, nargs='+', default=["spontaneous", "scripted"])
     parser.add_argument("--split_whisper_path", type=str, default=None)
     args = parser.parse_args()
 
