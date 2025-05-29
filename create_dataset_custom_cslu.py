@@ -92,7 +92,7 @@ def create_dataset(args):
             batched=False,
         )
 
-        outdir = os.path.join(args.root_dir, args.json_version, "data-timeframe", args.cslu_option, dataset_name, args.split)
+        outdir = os.path.join(args.root_dir, args.json_version, "data", args.cslu_option, dataset_name, args.split)
         if os.path.exists(outdir):
             print(f"Removing existing directory: {outdir}")
             shutil.rmtree(outdir)
