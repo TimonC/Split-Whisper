@@ -18,16 +18,23 @@ def transcribe(args):
         finetuned_model += "-en"
     finetuned_model += "-myst"
 
+    if args.split_whisper_path is not None:
+        finetuned_model = args.split_whisper_path
+        finetuned_model_name = os.path.basename(finetuned_model)
+    else:
+        finetuned_model_name = finetuned_model
     if args.using_base_whisper:
         finetuned_model = base_model
+    
 
-        
+
     print(f"Base model: {base_model}")
     print(f"Finetuned Model: {finetuned_model}")
 
     # Set up tokenizer and normalizer
     tokenizer = WhisperTokenizer.from_pretrained(base_model, language=args.whisper_language, task="transcribe")
     normalizer = tokenizer._normalize
+
 
     # Load model and pipeline
     metric = load("wer")
@@ -42,7 +49,7 @@ def transcribe(args):
     )
 
     # Load in test data
-    data_path = os.path.join(args.data_path, args.json_option, "data-timeframe", args.cslu_option)
+    data_path = os.path.join(args.data_path, args.json_option, "data", args.cslu_option)
     print(f"Dataset: {data_path}")
     print(f"Data splits: {args.data_splits}")
     testsets = {}
@@ -87,16 +94,16 @@ def transcribe(args):
         # Store summary
         results_summary[testset_name] = {
             "wer": wer,
-            "model": finetuned_model,
+            "model": finetuned_model_name,
             "num_samples": len(testset),
             "ground_truths": datasets["ground_truths"],
             "hypotheses": datasets["hypotheses"]
         }
 
     # Save final summary
-    os.makedirs(args.output_dir, exist_ok=True)
+    os.makedirs(args.results_dir, exist_ok=True)
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M")
-    summary_path = os.path.join(args.output_dir, f"{timestamp}.json")
+    summary_path = os.path.join(args.args.results_dir, f"{finetuned_model_name}_{timestamp}.json")
     with open(summary_path, "w") as summary_file:
         json.dump(results_summary, summary_file, indent=2)
 
@@ -108,13 +115,13 @@ if __name__ == "__main__":
     parser.add_argument("--whisper_language", type=str, default="english")
     parser.add_argument("--base_model", type=str, default="openai/whisper")
     parser.add_argument("--finetuned_model", type=str, default="aadel4/kid-whisper")
-    parser.add_argument("--split_whisper", type=bool, default=False)
     parser.add_argument("--data_path", type=str, default="./data_cslu_splits")
     parser.add_argument("--json_option", type=str, default="all")
     parser.add_argument("--cslu_option", type=str, default="scripted")
     parser.add_argument("--results_dir", type=str, default="./results")
     parser.add_argument("--data_splits", type=str, nargs='+', default=["all_genders_all_ages", "older_all_ages", "younger_all_ages"])
     parser.add_argument("--using_base_whisper", action="store_true", default=False)
+    parser.add_argument("--split_whisper_path", type=str, default=None)
     args = parser.parse_args()
 
     transcribe(args)
