@@ -2,9 +2,10 @@ import os
 import json
 
 results_dir = "results"
+cslu_option = "scripted"
 
-# Display names for each model folder
-model_name_map = {
+# Models and how they should appear
+models = {
     "whisper": "Whisper",
     "kid-whisper": "KidWhisper",
     "girl-whisper": "GirlWhisper",
@@ -13,56 +14,63 @@ model_name_map = {
     "younger_boy-whisper": "YoungerBoyWhisper"
 }
 
-# Define gender+age group keys for table layout
-testsets = [
+# Mapping of testset keys to table structure
+testsets = {
+    ("All", "", "gender_dataset_all_ages_all_genders"),
     ("Girl", "Younger", "gender_dataset_younger_Girl"),
     ("Girl", "Older", "gender_dataset_older_Girl"),
     ("Boy", "Younger", "gender_dataset_younger_Boy"),
-    ("Boy", "Older", "gender_dataset_older_Boy")
-]
+    ("Boy", "Older", "gender_dataset_older_Boy"),
+}
 
-# Choose which CSLU option to use
-cslu_option = "scripted"  # or "spontaneous"
+# Initialize results
+results = {display: {} for display in models.values()}
 
-# Initialize results dictionary
-results = {display_name: {} for display_name in model_name_map.values()}
-
-for folder, display_name in model_name_map.items():
-    summary_path = os.path.join(results_dir, cslu_option, folder, "summary.json")
-    if not os.path.isfile(summary_path):
+# Load data
+for folder, display in models.items():
+    path = os.path.join(results_dir, cslu_option, folder, "summary.json")
+    if not os.path.isfile(path):
         continue
-    with open(summary_path) as f:
+    with open(path) as f:
         summary = json.load(f)
+    for gender, age, key in testsets:
+        wer = summary.get(key, {}).get("wer", 0.0)
+        results[display][(gender, age)] = f"{wer:.2f}"
 
-    for gender, age, testset_key in testsets:
-        wer = summary.get(testset_key, {}).get("wer", 0.0)
-        results[display_name][(gender, age)] = f"{wer:.2f}"
-
-# Build LaTeX rows
+# Build LaTeX table rows
 rows = []
 for model in results:
     row = [model]
-    for gender in ["Girl", "Boy"]:
-        for age in ["Younger", "Older"]:
-            val = results[model].get((gender, age), "0.00")
-            row.append(val)
-    rows.append(" & ".join(row) + r" \\" + "\n\\hline")
+    # All (no subcategories)
+    row.append(results[model].get(("All", ""), "0.00"))
+    # Girl: Younger and Older
+    for age in ["Younger", "Older"]:
+        row.append(results[model].get(("Girl", age), "0.00"))
+    # Boy: Younger and Older
+    for age in ["Younger", "Older"]:
+        row.append(results[model].get(("Boy", age), "0.00"))
+    rows.append(" & ".join(row) + r" \\ \hline")
 
-# Final LaTeX tabular (without preamble or document)
-latex_table = r"""
-\begin{tabular}{|l|c|c|c|c|}
+# Create LaTeX code
+latex = r"""
+\begin{table}[ht]
+\centering
+\resizebox{0.5\textwidth}{!}{%
+\begin{tabular}{|l|c|c|c|c|c|}
 \hline
- & \multicolumn{2}{c|}{\textbf{Girl}} & \multicolumn{2}{c|}{\textbf{Boy}} \\
+ & \textbf{All} & \multicolumn{2}{c|}{\textbf{Girl}} & \multicolumn{2}{c|}{\textbf{Boy}} \\
 \hline
-\textbf{Model} & Younger & Older & Younger & Older \\
+\textbf{Model} &  & Younger & Older & Younger & Older \\
 \hline
 """ + "\n".join(rows) + r"""
-\end{tabular}
+\end{tabular}%
+}
+\caption{WER Results by Model, Gender, and Age Group (Including All)}
+\end{table}
 """
 
-# Save LaTeX table to file
-output_path = os.path.join(results_dir, f"wer_gender_table_{cslu_option}.tex")
-with open(output_path, "w") as f:
-    f.write(latex_table.strip())
+# Save to file
+with open("wer_table_gender_age_all.tex", "w") as f:
+    f.write(latex.strip())
 
-print(f"LaTeX gender table saved to: {output_path}")
+print("Saved to wer_table_gender_age_all.tex")

@@ -88,7 +88,7 @@ def train(args):
         finetuned_model = args.base_model
     else:
         finetuned_model = args.finetuned_model
-    dataset_path = os.path.join(args.data_path, args.json_option, args.cslu_option, "data", args.data_split)
+    dataset_path = os.path.join(args.data_path, args.json_option, "data", args.cslu_option, args.data_split)
     custom_dataset = load_data_custom_cslu(dataset_path, mode="train")
 
     normalizer = tokenizer._normalize
