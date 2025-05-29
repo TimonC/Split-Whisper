@@ -83,7 +83,7 @@ if __name__ == "__main__":
     parser.add_argument("--cslu_option", type=str, default="scripted")
     parser.add_argument("--output_dir", type=str, default="./fine-tuned-whisper")
 
-    parser.add_argument("--data_split", type=str, nargs='+', default=["all_genders_all_ages", "older_all_ages", "younger_all_ages"])
+    parser.add_argument("--data_splits", type=str, nargs='+', default=["all_genders_all_ages", "older_all_ages", "younger_all_ages"])
     args = parser.parse_args()
 
     transcribe(args)
