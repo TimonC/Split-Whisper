@@ -7,7 +7,7 @@ from transformers.pipelines.pt_utils import KeyDataset
 from load_data_custom_cslu import load_data_custom_cslu
 import argparse
 from datasets import Dataset, load_dataset, Audio
-
+import json 
 def transcribe(args):
     # Construct model names based on args
     base_model = f"{args.base_model}-{args.whisper_size}"
@@ -52,7 +52,9 @@ def transcribe(args):
     transcription_dir = os.path.join("huggingface_models_transcription", finetuned_model, "transcriptions")
     os.makedirs(transcription_dir, exist_ok=True)
     print(testsets)
+
     # Transcription loop
+    results_summary = {}
     for testset_name, testset in testsets.items():
         datasets = {"ground_truths": [], "hypotheses": []}
         print(f"Transcribing {testset_name}")
@@ -76,6 +78,21 @@ def transcribe(args):
         wer = metric.compute(predictions=datasets["hypotheses"], references=datasets["ground_truths"]) * 100
         print(f"Dataset: {testset_name} WER: {wer:.2f}")
 
+        # Store summary
+        results_summary[testset_name] = {
+            "wer": wer,
+            "model": finetuned_model,
+            "num_samples": len(testset),
+            "ground_truths": datasets["ground_truths"],
+            "hypotheses": datasets["hypotheses"]
+        }
+
+    # Save final summary
+    summary_path = os.path.join(transcription_dir, "transcription_summary.json")
+    with open(summary_path, "w") as summary_file:
+        json.dump(results_summary, summary_file, indent=2)
+
+    print(f"Saved transcription summary to {summary_path}")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
