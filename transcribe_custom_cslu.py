@@ -1,14 +1,9 @@
 from transformers import pipeline, WhisperForConditionalGeneration, WhisperTokenizer
 from transformers import WhisperFeatureExtractor
 import os
-from datasets import Dataset, load_dataset, Audio
-import soundfile as sf
-import json
-from collections import defaultdict
 from evaluate import load
 from tqdm import tqdm
 from transformers.pipelines.pt_utils import KeyDataset
-from Rishabh_norm import RishabhTextNormalizer
 from load_data_custom_cslu import load_data_custom_cslu
 import argparse
 
@@ -26,12 +21,8 @@ def transcribe(args):
     print(f"Finetuned Model: {finetuned_model}")
 
     # Set up tokenizer and normalizer
-    if "rishabh" in base_model.lower():
-        normalizer = RishabhTextNormalizer()
-        tokenizer = WhisperTokenizer.from_pretrained(base_model, language=args.whisper_language, task="transcribe")
-    else:
-        tokenizer = WhisperTokenizer.from_pretrained(base_model, language=args.whisper_language, task="transcribe")
-        normalizer = tokenizer._normalize
+    tokenizer = WhisperTokenizer.from_pretrained(base_model, language=args.whisper_language, task="transcribe")
+    normalizer = tokenizer._normalize
 
     # Load model and pipeline
     metric = load("wer")
