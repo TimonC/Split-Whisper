@@ -4,18 +4,19 @@ import json
 results_dir = "results"
 cslu_option = "scripted"
 
-# Models and how they should appear
+# Models and how they should appear (added OlderGirlWhisper and OlderBoyWhisper)
 models = {
     "whisper": "Whisper",
     "kid-whisper": "KidWhisper",
     "girl-whisper": "GirlWhisper",
     "boy-whisper": "BoyWhisper",
     "younger_girl-whisper": "YoungerGirlWhisper",
-    "younger_boy-whisper": "YoungerBoyWhisper"
+    "younger_boy-whisper": "YoungerBoyWhisper",
+    "older_girl-whisper": "OlderGirlWhisper",
+    "older_boy-whisper": "OlderBoyWhisper"
 }
 
-# Updated mapping of testset keys to table structure, note the keys remain same,
-# but display column will show 'All' instead of 'All Ages'
+# Mapping of testset keys to table structure, unchanged
 testsets = {
     ("Girl", "All", "gender_dataset_all_ages_Girl"),
     ("Girl", "Younger", "gender_dataset_younger_Girl"),
