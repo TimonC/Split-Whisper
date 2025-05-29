@@ -47,13 +47,17 @@ def transcribe(args):
         device="cuda",
         chunk_length_s=30,
     )
+    if args.json_option=="all":
+        data_splits = ["all_ages_all_genders", "older_all_genders", "younger_all_genders"]
+    else:
+        data_splits = ["all_ages_all_genders", "all_ages_Girl", "all_ages_Boy", "older_Girl", "younger_Girl", "older_Boy", "younger_Boy"]
     for cslu_option in args.cslu_options:
         # Load in test data
         data_path = os.path.join(args.data_path, args.json_option, "data", cslu_option)
         print(f"Dataset: {data_path}")
-        print(f"Data splits: {args.data_splits}")
+        print(f"Data splits: {data_splits}")
         testsets = {}
-        for ds in args.data_splits:
+        for ds in data_splits:
             testset = load_data_custom_cslu(os.path.join(data_path, ds), mode="test")
 
             testset = testset.cast_column("audio_path", Audio())
@@ -114,14 +118,13 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--whisper_size", type=str, default="small")
     parser.add_argument("--whisper_language", type=str, default="english")
+    parser.add_argument("--using_base_whisper", action="store_true", default=False)
     parser.add_argument("--base_model", type=str, default="openai/whisper")
     parser.add_argument("--finetuned_model", type=str, default="aadel4/kid-whisper")
     parser.add_argument("--data_path", type=str, default="./data_cslu_splits")
     parser.add_argument("--json_option", type=str, default="all")
     parser.add_argument("--results_dir", type=str, default="./results")
-    parser.add_argument("--data_splits", type=str, nargs='+', default=["all_ages_all_genders", "older_all_genders", "younger_all_genders"])
     parser.add_argument("--cslu_options", type=str, nargs='+', default=["scripted", "spontaneous"])
-    parser.add_argument("--using_base_whisper", action="store_true", default=False)
     parser.add_argument("--split_whisper_path", type=str, default=None)
     args = parser.parse_args()
 

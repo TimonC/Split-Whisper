@@ -4,19 +4,17 @@ import json
 results_dir = "results"
 cslu_option = "scripted"
 
-# Models and how they should appear (added OlderGirlWhisper and OlderBoyWhisper)
 models = {
     "whisper": "Whisper",
     "kid-whisper": "KidWhisper",
     "girl-whisper": "GirlWhisper",
     "boy-whisper": "BoyWhisper",
     "younger_girl-whisper": "YoungerGirlWhisper",
-    "younger_boy-whisper": "YoungerBoyWhisper",
     "older_girl-whisper": "OlderGirlWhisper",
-    "older_boy-whisper": "OlderBoyWhisper"
+    "younger_boy-whisper": "YoungerBoyWhisper",
+    "older_boy-whisper": "OlderBoyWhisper",
 }
 
-# Mapping of testset keys to table structure, unchanged
 testsets = {
     ("Girl", "All", "gender_dataset_all_ages_Girl"),
     ("Girl", "Younger", "gender_dataset_younger_Girl"),
@@ -26,10 +24,7 @@ testsets = {
     ("Boy", "Older", "gender_dataset_older_Boy"),
 }
 
-# Initialize results dictionary
-results = {display: {} for display in models.values()}
-
-# Load data from JSON files
+results = {name: {} for name in models.values()}
 for folder, display in models.items():
     path = os.path.join(results_dir, cslu_option, folder, "summary.json")
     if not os.path.isfile(path):
@@ -38,25 +33,32 @@ for folder, display in models.items():
         summary = json.load(f)
     for gender, age, key in testsets:
         wer = summary.get(key, {}).get("wer", 0.0)
-        results[display][(gender, age)] = f"{wer:.2f}"
+        results[display][(gender, age)] = wer
 
-# Build LaTeX table rows
+# Bold best per row
+def format_row(model_name, wer_dict):
+    cells = []
+    for g in ["Girl", "Boy"]:
+        for a in ["All", "Younger", "Older"]:
+            cells.append(wer_dict.get((g, a), 0.0))
+    min_val = min(cells)
+    formatted = [f"\\textbf{{{v:.2f}}}" if v == min_val else f"{v:.2f}" for v in cells]
+    return model_name + " & " + " & ".join(formatted) + r" \\"
+
+group1 = ["Whisper", "KidWhisper"]
+group2 = ["GirlWhisper", "BoyWhisper"]
+group3 = ["YoungerGirlWhisper", "OlderGirlWhisper", "YoungerBoyWhisper", "OlderBoyWhisper"]
+
 rows = []
-for model in results:
-    row = [model]
-    # Girl: All, Younger, Older
-    for age in ["All", "Younger", "Older"]:
-        row.append(results[model].get(("Girl", age), "0.00"))
-    # Boy: All, Younger, Older
-    for age in ["All", "Younger", "Older"]:
-        row.append(results[model].get(("Boy", age), "0.00"))
-    rows.append(" & ".join(row) + r" \\ \hline")
+for group in [group1, group2, group3]:
+    for model in group:
+        rows.append(format_row(model, results[model]))
+    rows.append(r"\hline")
 
-# Create LaTeX code
 latex = r"""
 \begin{table}[ht]
 \centering
-\resizebox{0.5\textwidth}{!}{%
+\resizebox{0.95\textwidth}{!}{%
 \begin{tabular}{|l|c|c|c|c|c|c|}
 \hline
  & \multicolumn{3}{c|}{\textbf{Girl}} & \multicolumn{3}{c|}{\textbf{Boy}} \\
@@ -70,7 +72,6 @@ latex = r"""
 \end{table}
 """
 
-# Save LaTeX to file
 with open("wer_table_gender_age.tex", "w") as f:
     f.write(latex.strip())
 
