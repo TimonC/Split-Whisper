@@ -120,7 +120,7 @@ if __name__ == "__main__":
     parser.add_argument("--json_option", type=str, default="all")
     parser.add_argument("--cslu_option", type=str, default="scripted")
     parser.add_argument("--results_dir", type=str, default="./results")
-    parser.add_argument("--data_splits", type=str, nargs='+', default=["all_genders_all_ages", "older_all_ages", "younger_all_ages"])
+    parser.add_argument("--data_splits", type=str, nargs='+', default=["all_ages_all_genders", "older_all_genders", "younger_all_genders"])
     parser.add_argument("--using_base_whisper", action="store_true", default=False)
     parser.add_argument("--split_whisper_path", type=str, default=None)
     args = parser.parse_args()

@@ -19,7 +19,7 @@ def get_parser() -> argparse.ArgumentParser:
     parser.add_argument("--data_path", type=str, default="./data_cslu_splits")
     parser.add_argument("--json_option", type=str, default="all")
     parser.add_argument("--cslu_option", type=str, default="scripted")
-    parser.add_argument("--data_split", type=str, default="all_genders_all_ages")
+    parser.add_argument("--data_split", type=str, default="all_ages_all_genders")
     parser.add_argument("--output_dir", type=str, default="./fine-tuned-whisper")
 
     parser.add_argument("--num_train_epochs", type=int, default=20)
