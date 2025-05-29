@@ -48,7 +48,7 @@ def transcribe(args):
     # Prepare output directory
     transcription_dir = os.path.join("huggingface_models_transcription", finetuned_model, "transcriptions")
     os.makedirs(transcription_dir, exist_ok=True)
-
+    print(testsets)
     # Transcription loop
     for testset in testsets:
         datasets = {"ground_truths": [], "hypotheses": []}
