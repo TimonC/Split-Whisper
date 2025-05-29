@@ -39,14 +39,11 @@ def transcribe(args):
     data_path = os.path.join(args.data_path, args.json_option, "data-timeframe", args.cslu_option)
     print(f"Dataset: {data_path}")
     print(f"Data splits: {args.data_splits}")
-    testsets = []
+    testsets = {}
     for ds in args.data_splits:
-        testset = load_data_custom_cslu(os.path.join(data_path, ds), mode = "test")
+        testset = load_data_custom_cslu(os.path.join(data_path, ds), mode="test")
         testset = testset['test']
-        # testset = testset.cast_column("audio_path", Audio())
-        # testset = testset.rename_column("audio_path", "audio")
-        testset.name = ds
-        testsets.append(testset)
+        testsets[ds] = testset
     # Prepare output directory
     transcription_dir = os.path.join("huggingface_models_transcription", finetuned_model, "transcriptions")
     os.makedirs(transcription_dir, exist_ok=True)
