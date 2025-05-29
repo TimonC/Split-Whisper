@@ -41,7 +41,7 @@ def transcribe(args):
     print(f"Test dataset: {test_path}")
 
     # Load test data
-    testsets = load_data_custom_cslu(test_path, split="test")
+    testsets = load_data_custom_cslu(test_path, mode = "test")
 
     # Prepare output directory
     transcription_dir = os.path.join("huggingface_models_transcription", finetuned_model, "transcriptions")
