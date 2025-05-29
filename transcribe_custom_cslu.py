@@ -17,11 +17,13 @@ def transcribe(args):
         base_model += ".en"
         finetuned_model += "-en"
     finetuned_model += "-myst"
-    print(f"Base model: {base_model}")
-    print(f"Finetuned Model: {finetuned_model}")
 
     if args.using_base_whisper:
         finetuned_model = base_model
+
+        
+    print(f"Base model: {base_model}")
+    print(f"Finetuned Model: {finetuned_model}")
 
     # Set up tokenizer and normalizer
     tokenizer = WhisperTokenizer.from_pretrained(base_model, language=args.whisper_language, task="transcribe")
