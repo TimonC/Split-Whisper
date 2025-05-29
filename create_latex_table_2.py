@@ -14,19 +14,21 @@ models = {
     "younger_boy-whisper": "YoungerBoyWhisper"
 }
 
-# Mapping of testset keys to table structure
+# Updated mapping of testset keys to table structure, note the keys remain same,
+# but display column will show 'All' instead of 'All Ages'
 testsets = {
-    ("All", "", "gender_dataset_all_ages_all_genders"),
+    ("Girl", "All", "gender_dataset_all_ages_Girl"),
     ("Girl", "Younger", "gender_dataset_younger_Girl"),
     ("Girl", "Older", "gender_dataset_older_Girl"),
+    ("Boy", "All", "gender_dataset_all_ages_Boy"),
     ("Boy", "Younger", "gender_dataset_younger_Boy"),
     ("Boy", "Older", "gender_dataset_older_Boy"),
 }
 
-# Initialize results
+# Initialize results dictionary
 results = {display: {} for display in models.values()}
 
-# Load data
+# Load data from JSON files
 for folder, display in models.items():
     path = os.path.join(results_dir, cslu_option, folder, "summary.json")
     if not os.path.isfile(path):
@@ -41,13 +43,11 @@ for folder, display in models.items():
 rows = []
 for model in results:
     row = [model]
-    # All (no subcategories)
-    row.append(results[model].get(("All", ""), "0.00"))
-    # Girl: Younger and Older
-    for age in ["Younger", "Older"]:
+    # Girl: All, Younger, Older
+    for age in ["All", "Younger", "Older"]:
         row.append(results[model].get(("Girl", age), "0.00"))
-    # Boy: Younger and Older
-    for age in ["Younger", "Older"]:
+    # Boy: All, Younger, Older
+    for age in ["All", "Younger", "Older"]:
         row.append(results[model].get(("Boy", age), "0.00"))
     rows.append(" & ".join(row) + r" \\ \hline")
 
@@ -56,21 +56,21 @@ latex = r"""
 \begin{table}[ht]
 \centering
 \resizebox{0.5\textwidth}{!}{%
-\begin{tabular}{|l|c|c|c|c|c|}
+\begin{tabular}{|l|c|c|c|c|c|c|}
 \hline
- & \textbf{All} & \multicolumn{2}{c|}{\textbf{Girl}} & \multicolumn{2}{c|}{\textbf{Boy}} \\
+ & \multicolumn{3}{c|}{\textbf{Girl}} & \multicolumn{3}{c|}{\textbf{Boy}} \\
 \hline
-\textbf{Model} &  & Younger & Older & Younger & Older \\
+\textbf{Model} & All & Younger & Older & All & Younger & Older \\
 \hline
 """ + "\n".join(rows) + r"""
 \end{tabular}%
 }
-\caption{WER Results by Model, Gender, and Age Group (Including All)}
+\caption{WER Results by Model, Gender, and Age Group}
 \end{table}
 """
 
-# Save to file
-with open("wer_table_gender_age_all.tex", "w") as f:
+# Save LaTeX to file
+with open("wer_table_gender_age.tex", "w") as f:
     f.write(latex.strip())
 
-print("Saved to wer_table_gender_age_all.tex")
+print("Saved to wer_table_gender_age.tex")

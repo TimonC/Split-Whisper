@@ -43,7 +43,7 @@ latex = r"""
 \hline
  & \multicolumn{3}{c|}{\textbf{Scripted}} & \multicolumn{3}{c|}{\textbf{Spontaneous}} \\
 \hline
-\textbf{Model} & All Ages & Younger & Older & All Ages & Younger & Older \\
+\textbf{Model} & All & Younger & Older & All & Younger & Older \\
 \hline
 """ + "\n".join(rows) + r"""
 \end{tabular}%
