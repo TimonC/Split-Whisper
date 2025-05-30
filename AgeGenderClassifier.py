@@ -111,12 +111,18 @@ def hf_collate_fn(batch):
         x = itm['input_features']
         x = x.clone().float() if isinstance(x, torch.Tensor) else torch.tensor(x, dtype=torch.float32)
         feats.append(x)
-        ys_age.append(itm['y_age'])
-        ys_gen.append(itm['y_gender'])
+        # label may not exist but both present in train
+        ys_age.append(itm.get('y_age', None))
+        ys_gen.append(itm.get('y_gender', None))
         pv = x.min().item()
-        mask = ~(torch.all(x == pv, dim=0))
-        masks.append(mask)
-    return torch.stack(feats).unsqueeze(1), torch.stack(masks), (torch.tensor(ys_age), torch.tensor(ys_gen))
+        masks.append(~(torch.all(x == pv, dim=0)))
+    batch_feats = torch.stack(feats).unsqueeze(1)
+    batch_masks = torch.stack(masks)
+    # convert labels
+    ya = torch.tensor(ys_age) if ys_age[0] is not None else None
+    yg = torch.tensor(ys_gen) if ys_gen[0] is not None else None
+    return batch_feats, batch_masks, ya, yg
+
 
 # ===== Training & Evaluation =====
 
