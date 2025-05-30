@@ -93,7 +93,7 @@ class AgeGenderCNN(nn.Module):
 def combine_datasets(class_names, dataset_path):
     all_train, all_dev = [], []
     for cls in class_names:
-        ds = load_data_custom_cslu(cls, dataset_path)
+        ds = load_data_custom_cslu(os.path.join(dataset_path, cls), "train")
         is_younger = 'younger' in cls.lower()
         is_girl = 'girl' in cls.lower()
         y_age = int(not is_younger)
