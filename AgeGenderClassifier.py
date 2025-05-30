@@ -253,7 +253,7 @@ def main():
     parser.add_argument('--dataset_path', type=str, default='data_cslu_splits/gender/data/scripted')
     parser.add_argument('--output_dir', type=str, default='AgeGenderModels')
     parser.add_argument('--results_dir', type=str, default='results/classifier')
-    parser.add_argument('--train_batch_size', type=int, default=32)
+    parser.add_argument('--train_batch_size', type=int, default=16)
     parser.add_argument('--eval_batch_size', type=int, default=32)
     parser.add_argument('--num_train_epochs', type=int, default=50)
     parser.add_argument('--learning_rate', type=float, default=1e-4)
