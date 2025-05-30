@@ -105,30 +105,31 @@ def combine_datasets(dataset_path):
     class_names = ['younger_Girl', 'younger_Boy', 'older_Girl', 'older_Boy']
 
     all_train, all_dev = [], []
-    for cls in class_names:
+
+    print("Loading datasets...")
+
+    for i in trange(len(class_names), desc="Classes", leave=True):
+        cls = class_names[i]
         path = os.path.join(dataset_path, cls)
         ds = load_data_custom_cslu(path, mode="train")
 
         is_younger = 'younger' in cls.lower()
         is_girl = 'girl' in cls.lower()
-        y_age = int(not is_younger)   # 1 = older, 0 = younger
-        y_gender = int(not is_girl)   # 1 = boy, 0 = girl
+        y_age = int(not is_younger)
+        y_gender = int(not is_girl)
 
         for split, coll in [('train', all_train), ('development', all_dev)]:
-            # Convert to plain dict to avoid caching
-            data_dict = ds[split].to_dict()
+            split_list = ds[split][:]
+            for item in split_list:
+                item['y_age'] = y_age
+                item['y_gender'] = y_gender
+            coll.extend(split_list)
 
-            # Add label columns
-            data_dict['y_age'] = [y_age] * len(data_dict['input_features'])
-            data_dict['y_gender'] = [y_gender] * len(data_dict['input_features'])
+    print("Combining datasets...")
+    train = Dataset.from_dict({k: [d[k] for d in all_train] for k in all_train[0].keys()})
+    dev = Dataset.from_dict({k: [d[k] for d in all_dev] for k in all_dev[0].keys()})
 
-            # Create new Dataset without caching
-            tmp = Dataset.from_dict(data_dict)
-            coll.append(tmp)
-
-    train = concatenate_datasets(all_train)
-    dev = concatenate_datasets(all_dev)
-
+    print(f"Train size: {len(train)}, Dev size: {len(dev)}")
     return train, dev
 
 # ===== Collate =====
