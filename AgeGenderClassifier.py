@@ -5,11 +5,10 @@ import torch.nn as nn
 import numpy as np
 import json
 from torch.utils.data import DataLoader
-from datasets import concatenate_datasets
+from datasets import concatenate_datasets, Dataset
 from sklearn.metrics import accuracy_score, f1_score
 from tqdm import tqdm, trange
 import torch.nn.functional as F
-
 from load_data_custom_cslu import load_data_custom_cslu
 
 # ===== Model =====
@@ -116,9 +115,15 @@ def combine_datasets(dataset_path):
         y_gender = int(not is_girl)   # 1 = boy, 0 = girl
 
         for split, coll in [('train', all_train), ('development', all_dev)]:
-            ds_split = ds[split].map(lambda x: x, load_from_cache_file=False)
-            tmp = ds_split.add_column('y_age', [y_age] * len(ds_split))
-            tmp = tmp.add_column('y_gender', [y_gender] * len(tmp))
+            # Convert to plain dict to avoid caching
+            data_dict = ds[split].to_dict()
+
+            # Add label columns
+            data_dict['y_age'] = [y_age] * len(data_dict['input_features'])
+            data_dict['y_gender'] = [y_gender] * len(data_dict['input_features'])
+
+            # Create new Dataset without caching
+            tmp = Dataset.from_dict(data_dict)
             coll.append(tmp)
 
     train = concatenate_datasets(all_train)
