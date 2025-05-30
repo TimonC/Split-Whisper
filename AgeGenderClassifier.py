@@ -262,7 +262,7 @@ def train_age_gender_classifier(args):
 # ===== CLI =====
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--dataset_path', type=str, default='data_cslu_splits/gender/data-timeframe/scripted')
+    parser.add_argument('--dataset_path', type=str, default='data_cslu_splits/gender/data/scripted')
     parser.add_argument('--output_dir', type=str, default='AgeGenderModels')
     parser.add_argument('--train_batch_size', type=int, default=32)
     parser.add_argument('--eval_batch_size', type=int, default=32)
