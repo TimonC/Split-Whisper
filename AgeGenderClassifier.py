@@ -35,10 +35,10 @@ class ResidualBlock(nn.Module):
         out += identity
         return self.relu(out)
 
-class AgeGenderCNN(nn.Module):
-    def __init__(self, task='both'):
+
+class BinaryCNN(nn.Module):
+    def __init__(self):
         super().__init__()
-        self.task = task
         self.input_norm = nn.InstanceNorm2d(1, eps=1e-6, affine=False)
         self.initial = nn.Sequential(
             nn.Conv2d(1, 16, 3, padding=1, bias=False),
@@ -48,47 +48,51 @@ class AgeGenderCNN(nn.Module):
         self.layer1 = self._make_layer(16, 32, stride=2)
         self.layer2 = self._make_layer(32, 64, stride=2)
         self.layer3 = self._make_layer(64, 128, stride=2)
+
+        # shared pooling + fc
         self.shared_fc = nn.Sequential(
             nn.AdaptiveAvgPool2d((1,1)),
             nn.Flatten(),
             nn.Linear(128, 64),
             nn.ReLU(inplace=True),
-            nn.Dropout(0.5)
+            nn.Dropout(0.5),
         )
-        # Define heads
-        if self.task in ('age', 'both'):
-            self.age_head = nn.Linear(64, 1)
-        if self.task in ('gender', 'both'):
-            self.gender_head = nn.Linear(64, 1)
+        self.age_head    = nn.Linear(64, 1)
+        self.gender_head = nn.Linear(64, 1)
 
     def _make_layer(self, in_c, out_c, stride=1):
         downsample = None
-        if stride != 1 or in_c != out_c:
+        if stride!=1 or in_c!=out_c:
             downsample = nn.Sequential(
                 nn.Conv2d(in_c, out_c, 1, stride=stride, bias=False),
-                nn.BatchNorm2d(out_c)
+                nn.BatchNorm2d(out_c),
             )
         return nn.Sequential(
             ResidualBlock(in_c, out_c, stride, downsample),
             ResidualBlock(out_c, out_c)
         )
 
+    def downsample_mask(self, mask, target_length):
+        m = mask.unsqueeze(1).float()                   # (N,1,T_in)
+        factor = m.size(-1) // target_length
+        m_ds = F.avg_pool1d(m, kernel_size=factor, stride=factor)
+        return (m_ds > 0.5).squeeze(1)                  # (N, T_out)
+
     def forward(self, x, mask=None):
-        # x: (N,1,H,W), mask unused here
         x = self.input_norm(x)
         x = self.initial(x)
         x = self.layer1(x)
         x = self.layer2(x)
         x = self.layer3(x)
-        x = self.shared_fc(x)
 
-        outputs = {}
-        if self.task in ('age', 'both'):
-            outputs['age'] = self.age_head(x).squeeze(1)
-        if self.task in ('gender', 'both'):
-            outputs['gender'] = self.gender_head(x).squeeze(1)
-        return outputs
+        if mask is not None:
+            T_out = x.size(-1)
+            m = self.downsample_mask(mask, T_out)      # (N, T_out)
+            m = m.unsqueeze(1).unsqueeze(2)            # (N,1,1,T_out)
+            x = x * m                                  # broadcast over C,H
 
+        x = self.shared_fc(x)                          # → (N,64)
+        return self.age_head(x).squeeze(1), self.gender_head(x).squeeze(1)
 # ===== Data Loading =====
 def combine_datasets(dataset_path):
     class_names = ['younger_Boy', 'younger_Girl', 'older_Boy', 'older_Girl']
@@ -185,6 +189,40 @@ def eval_loop(model, ldr, dev, task):
         if preds[k]: preds[k] = np.concatenate(preds[k]); labels[k] = np.concatenate(labels[k])
     return preds, labels
 
+
+# custom evaluation metrics
+def custom_metrics(preds, labels, task, losses=None):
+    results = {}
+    if task == 'age':
+        classnames = ['younger', 'older']
+    elif task == 'gender':
+        classnames = ['girl', 'boy']
+    elif task == 'both':
+        classnames = ['younger_girl', 'younger_boy', 'older_girl', 'older_boy']
+    else:
+        raise ValueError(f"Unknown task: {task}")
+
+    task_key = task if task != 'both' else 'joint'
+    labels_arr = np.array(labels[task_key])
+    preds_arr = np.array(preds[task_key])
+
+    avg = 'weighted' if task == 'both' else 'binary'
+    results['acc_all'] = accuracy_score(labels_arr, preds_arr)
+    results['f1_all'] = f1_score(labels_arr, preds_arr, average=avg)
+
+    for cls, cls_name in enumerate(classnames):
+        idx = np.where(labels_arr == cls)[0]
+        if len(idx) == 0:
+            results[f"acc_{cls_name}"] = None
+            results[f"f1_{cls_name}"] = None
+            continue
+        results[f"acc_{cls_name}"] = accuracy_score(labels_arr[idx], preds_arr[idx])
+        results[f"f1_{cls_name}"] = f1_score(labels_arr[idx], preds_arr[idx], average=avg)
+
+    results['loss'] = losses
+    return results['acc_all'], results
+
+
 # ===== Main Trainer =====
 def train_age_gender_classifier(args):
     # Determine class names based on task
@@ -195,7 +233,7 @@ def train_age_gender_classifier(args):
     dev_loader = DataLoader(dev_ds, batch_size=args.eval_batch_size, shuffle=False, collate_fn=hf_collate_fn)
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    model = AgeGenderCNN().to(device)
+    model = BinaryCNN().to(device)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=args.learning_rate, weight_decay=1e-5)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', factor=0.5, patience=2, min_lr=1e-6)
@@ -203,85 +241,43 @@ def train_age_gender_classifier(args):
 
     # Prepare results structure
     max_epochs = args.num_train_epochs
-    results = {
-        'epoch': list(range(1, max_epochs+1)),
-        'loss': [None] * max_epochs,
-        'accuracy_age': [None] * max_epochs,
-        'accuracy_gender': [None] * max_epochs,
-        'accuracy_joint': [None] * max_epochs,
-        'f1_age': [None] * max_epochs,
-        'f1_gender': [None] * max_epochs,
-        'f1_joint': [None] * max_epochs
-    }
+    os.makedirs(args.results_dir, exist_ok=True)
+    json_file = os.path.join(args.results_dir, f"{args.task}.json")
 
-    results_dir = os.makedirs(os.path.join(args.output_dir, 'results', 'classifier'), exist_ok=True)
-    json_file = os.path.join(results_dir, f"{args.task}.json")
-
-    best_metric = 0.0
+    best_acc = 0.0
     patience_counter = 0
-
+    losses = []
     for epoch in trange(max_epochs, desc='Epochs'):
-        idx = epoch
-        train_loss = train_loop(model, train_loader, optimizer, loss_fn, device, args.task)
+        loss = train_loop(model, train_loader, optimizer, loss_fn, device, args.task)
+        losses.append(loss)
         preds, labels = eval_loop(model, dev_loader, device, args.task)
-
         # compute metrics
-        acc_age = f1_age = acc_gen = f1_gen = acc_joint = f1_joint = None
-        if 'age' in preds:
-            acc_age = accuracy_score(labels['age'], preds['age'])
-            f1_age = f1_score(labels['age'], preds['age'])
-        if 'gender' in preds:
-            acc_gen = accuracy_score(labels['gender'], preds['gender'])
-            f1_gen = f1_score(labels['gender'], preds['gender'])
-        if 'joint' in preds:
-            acc_joint = accuracy_score(labels['joint'], preds['joint'])
-            f1_joint = f1_score(labels['joint'], preds['joint'], average='weighted')
-
-        # store
-        results['loss'][idx] = train_loss
-        results['accuracy_age'][idx] = acc_age
-        results['accuracy_gender'][idx] = acc_gen
-        results['accuracy_joint'][idx] = acc_joint
-        results['f1_age'][idx] = f1_age
-        results['f1_gender'][idx] = f1_gen
-        results['f1_joint'][idx] = f1_joint
+        overall_acc, results = custom_metrics(preds, labels, args.task, losses=losses)
+        scheduler.step(overall_acc)
 
         # conditional model save
-        if args.save_model:
-            metric = acc_joint if args.task=='both' else (acc_age if args.task=='age' else acc_gen)
-            if metric and metric > best_metric:
-                best_metric = metric
-                torch.save(model.state_dict(), os.path.join(args.output_dir, f"{args.task}.pt"))
-
-        # nicely formatted print
-        print(
-            f"Epoch {epoch+1}/{max_epochs} | "
-            f"Loss: {train_loss:.4f} | "
-            f"Age: Acc={acc_age:.3f if acc_age is not None else 'N/A'} F1={f1_age:.3f if f1_age is not None else 'N/A'} | "
-            f"Gender: Acc={acc_gen:.3f if acc_gen is not None else 'N/A'} F1={f1_gen:.3f if f1_gen is not None else 'N/A'} | "
-            f"Joint: Acc={acc_joint:.3f if acc_joint is not None else 'N/A'} F1={f1_joint:.3f if f1_joint is not None else 'N/A'}"
-        )
-
-        # save results JSON each epoch
-        with open(json_file, 'w') as jf:
-            json.dump(results, jf, indent=2)
-
-        # scheduler and early stopping
-        metric = acc_joint if args.task=='both' else (acc_age if args.task=='age' else acc_gen)
-        scheduler.step(metric)
-        if metric and metric > best_metric:
+        if overall_acc > best_acc:
             patience_counter = 0
+            best_acc = overall_acc
+            if args.save_model:
+                torch.save(model.state_dict(), os.path.join(args.output_dir, f"{args.task}.pt"))
         else:
             patience_counter += 1
             if patience_counter >= args.patience:
                 print("Early stopping triggered.")
                 break
 
+        with open(json_file, 'w') as jf:
+            json.dump(results, jf, indent=2)
+
+
+
 # ===== CLI =====
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--dataset_path', type=str, default='data_cslu_splits/gender/data/scripted')
     parser.add_argument('--output_dir', type=str, default='AgeGenderModels')
+    parser.add_argument('--results_dir', type=str, default='results/classifier')
     parser.add_argument('--train_batch_size', type=int, default=32)
     parser.add_argument('--eval_batch_size', type=int, default=32)
     parser.add_argument('--num_train_epochs', type=int, default=50)
@@ -290,6 +286,10 @@ def main():
     parser.add_argument('--patience', type=int, default=10, help='Early stopping patience')
     parser.add_argument('--save_model', action='store_true', default=False)
     args = parser.parse_args()
+    if args.task=='both':
+        print(f"Training a model to classify clsu children's speech by age and gender.")
+    else:
+        print(f"Training a model to classify clsu children's speech by {args.task}.")
     train_age_gender_classifier(args)
 
 if __name__ == '__main__':
