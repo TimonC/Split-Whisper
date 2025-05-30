@@ -14,86 +14,58 @@ from torch.amp import GradScaler, autocast
 from torch.utils.data import WeightedRandomSampler
 from collections import Counter
 # ===== Model =====
-class ResidualBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, stride=1, downsample=None):
-        super().__init__()
-        self.conv1 = nn.Conv2d(in_channels, out_channels, 3, stride=stride, padding=1, bias=False)
-        self.bn1 = nn.BatchNorm2d(out_channels)
-        self.relu = nn.ReLU(inplace=True)
-        self.conv2 = nn.Conv2d(out_channels, out_channels, 3, padding=1, bias=False)
-        self.bn2 = nn.BatchNorm2d(out_channels)
-        self.downsample = downsample
-
-    def forward(self, x):
-        identity = x
-        out = self.conv1(x)
-        out = self.bn1(out)
-        out = self.relu(out)
-        out = self.conv2(out)
-        out = self.bn2(out)
-        if self.downsample is not None:
-            identity = self.downsample(x)
-        out += identity
-        return self.relu(out)
-
-
 class BinaryCNN(nn.Module):
     def __init__(self, task='both'):
         super().__init__()
         self.task = task
-        self.input_norm = nn.InstanceNorm2d(1, eps=1e-6, affine=False)
+
         self.initial = nn.Sequential(
-            nn.Conv2d(1, 16, 3, padding=1, bias=False),
-            nn.BatchNorm2d(16),
+            nn.Conv2d(1, 8, 3, padding=1, bias=False),
+            nn.BatchNorm2d(8),
             nn.ReLU(inplace=True)
         )
-        self.layer1 = self._make_layer(16, 32, stride=2)
-        self.layer2 = self._make_layer(32, 64, stride=2)
-        self.layer3 = self._make_layer(64, 128, stride=2)
+        self.layer1 = self._make_layer(8, 16, stride=2)
+        self.layer2 = self._make_layer(16, 32, stride=2)
+        self.layer3 = self._make_layer(32, 64, stride=2)
 
-        # shared pooling + fc
         self.shared_fc = nn.Sequential(
-            nn.AdaptiveAvgPool2d((1,1)),
+            nn.AdaptiveAvgPool2d((1, 1)),
             nn.Flatten(),
-            nn.Linear(128, 64),
+            nn.Linear(64, 32),
             nn.ReLU(inplace=True),
             nn.Dropout(0.5),
         )
-        self.age_head    = nn.Linear(64, 1)
-        self.gender_head = nn.Linear(64, 1)
+        self.age_head = nn.Linear(32, 1)
+        self.gender_head = nn.Linear(32, 1)
 
     def _make_layer(self, in_c, out_c, stride=1):
-        downsample = None
-        if stride!=1 or in_c!=out_c:
-            downsample = nn.Sequential(
-                nn.Conv2d(in_c, out_c, 1, stride=stride, bias=False),
-                nn.BatchNorm2d(out_c),
-            )
         return nn.Sequential(
-            ResidualBlock(in_c, out_c, stride, downsample),
-            ResidualBlock(out_c, out_c)
+            nn.Conv2d(in_c, out_c, 3, stride=stride, padding=1, bias=False),
+            nn.BatchNorm2d(out_c),
+            nn.ReLU(inplace=True)
         )
 
     def downsample_mask(self, mask, target_length):
-        m = mask.unsqueeze(1).float()                   # (N,1,T_in)
+        m = mask.unsqueeze(1).float()  # (N,1,T_in)
         factor = m.size(-1) // target_length
-        m_ds = F.avg_pool1d(m, kernel_size=factor, stride=factor)
-        return (m_ds > 0.5).squeeze(1)                  # (N, T_out)
+        if factor == 0:
+            factor = 1
+        m_ds = F.avg_pool1d(m, kernel_size=factor, stride=factor, ceil_mode=True)
+        return (m_ds > 0.5).squeeze(1)  # (N, T_out)
 
     def forward(self, x, mask=None):
-        x = self.input_norm(x)
         x = self.initial(x)
         x = self.layer1(x)
         x = self.layer2(x)
-        x = self.layer3(x)
+        x = self.layer3(x)  # (N, C, F, T_out)
 
         if mask is not None:
             T_out = x.size(-1)
-            m = self.downsample_mask(mask, T_out)      # (N, T_out)
-            m = m.unsqueeze(1).unsqueeze(2)            # (N,1,1,T_out)
-            x = x * m                                  # broadcast over C,H
+            m = self.downsample_mask(mask, T_out)  # (N, T_out)
+            m = m.unsqueeze(1).unsqueeze(2)        # (N,1,1,T_out)
+            x = x * m                              # broadcast over C, F
 
-        x = self.shared_fc(x)                          # → (N,64)
+        x = self.shared_fc(x)  # → (N, 32)
 
         outputs = {}
         if self.task in ('age', 'both'):
