@@ -90,7 +90,9 @@ class AgeGenderCNN(nn.Module):
         return outputs
 
 # ===== Data Loading =====
-def combine_datasets(class_names, dataset_path):
+def combine_datasets(dataset_path):
+    class_names = ['younger_Boy', 'younger_Girl', 'older_Boy', 'older_Girl']
+
     all_train, all_dev = [], []
     for cls in class_names:
         path = os.path.join(dataset_path, cls)
@@ -99,7 +101,7 @@ def combine_datasets(class_names, dataset_path):
         is_younger = 'younger' in cls.lower()
         is_girl = 'girl' in cls.lower()
         y_age = int(not is_younger)   # 1 = older, 0 = younger
-        y_gender = int(is_girl)       # 1 = girl, 0 = boy
+        y_gender = int(not is_girl)       # 1 = boy, 0 = girl
 
         for split, coll in [('train', all_train), ('development', all_dev)]:
             # Reset indices and avoid caching here:
@@ -186,14 +188,7 @@ def eval_loop(model, ldr, dev, task):
 # ===== Main Trainer =====
 def train_age_gender_classifier(args):
     # Determine class names based on task
-    if args.task == 'age':
-        true_class_names = ['younger_all_genders', 'older_all_genders']
-    elif args.task == 'gender':
-        true_class_names = ['all_ages_Boy', 'all_ages_Girl']
-    else:
-        true_class_names = ['younger_Boy', 'younger_Girl', 'older_Boy', 'older_Girl']
-
-    train_ds, dev_ds = combine_datasets(true_class_names, args.dataset_path)
+    train_ds, dev_ds = combine_datasets(args.dataset_path)
     for d in [train_ds, dev_ds]:
         d.set_format(type='torch', columns=['input_features', 'y_age', 'y_gender'])
     train_loader = DataLoader(train_ds, batch_size=args.train_batch_size, shuffle=True, collate_fn=hf_collate_fn)
