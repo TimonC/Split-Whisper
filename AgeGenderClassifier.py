@@ -5,8 +5,8 @@ import torch.nn as nn
 import numpy as np
 import json
 from torch.utils.data import DataLoader
-from datasets import DatasetDict, Dataset, concatenate_datasets
-from sklearn.metrics import accuracy_score, f1_score, classification_report
+from datasets import concatenate_datasets
+from sklearn.metrics import accuracy_score, f1_score
 from tqdm import tqdm, trange
 import torch.nn.functional as F
 
@@ -37,8 +37,9 @@ class ResidualBlock(nn.Module):
 
 
 class BinaryCNN(nn.Module):
-    def __init__(self):
+    def __init__(self, task='both'):
         super().__init__()
+        self.task = task
         self.input_norm = nn.InstanceNorm2d(1, eps=1e-6, affine=False)
         self.initial = nn.Sequential(
             nn.Conv2d(1, 16, 3, padding=1, bias=False),
@@ -92,10 +93,17 @@ class BinaryCNN(nn.Module):
             x = x * m                                  # broadcast over C,H
 
         x = self.shared_fc(x)                          # → (N,64)
-        return self.age_head(x).squeeze(1), self.gender_head(x).squeeze(1)
+
+        outputs = {}
+        if self.task in ('age', 'both'):
+            outputs['age'] = self.age_head(x).squeeze(1)
+        if self.task in ('gender', 'both'):
+            outputs['gender'] = self.gender_head(x).squeeze(1)
+        return outputs
+
 # ===== Data Loading =====
 def combine_datasets(dataset_path):
-    class_names = ['younger_Boy', 'younger_Girl', 'older_Boy', 'older_Girl']
+    class_names = ['younger_Girl', 'younger_Boy', 'older_Girl', 'older_Boy']
 
     all_train, all_dev = [], []
     for cls in class_names:
@@ -105,13 +113,10 @@ def combine_datasets(dataset_path):
         is_younger = 'younger' in cls.lower()
         is_girl = 'girl' in cls.lower()
         y_age = int(not is_younger)   # 1 = older, 0 = younger
-        y_gender = int(not is_girl)       # 1 = boy, 0 = girl
+        y_gender = int(not is_girl)   # 1 = boy, 0 = girl
 
         for split, coll in [('train', all_train), ('development', all_dev)]:
-            # Reset indices and avoid caching here:
             ds_split = ds[split].map(lambda x: x, load_from_cache_file=False)
-
-            # Now add columns without triggering flattening:
             tmp = ds_split.add_column('y_age', [y_age] * len(ds_split))
             tmp = tmp.add_column('y_gender', [y_gender] * len(tmp))
             coll.append(tmp)
@@ -120,6 +125,7 @@ def combine_datasets(dataset_path):
     dev = concatenate_datasets(all_dev)
 
     return train, dev
+
 # ===== Collate =====
 def hf_collate_fn(batch):
     feats, ys_age, ys_gen, masks = [], [], [], []
@@ -127,33 +133,29 @@ def hf_collate_fn(batch):
         x = itm['input_features']
         x = x.clone().float() if isinstance(x, torch.Tensor) else torch.tensor(x, dtype=torch.float32)
         feats.append(x)
-        # label may not exist but both present in train
         ys_age.append(itm.get('y_age', None))
         ys_gen.append(itm.get('y_gender', None))
         pv = x.min().item()
         masks.append(~(torch.all(x == pv, dim=0)))
     batch_feats = torch.stack(feats).unsqueeze(1)
     batch_masks = torch.stack(masks)
-    # convert labels
     ya = torch.tensor(ys_age) if ys_age[0] is not None else None
     yg = torch.tensor(ys_gen) if ys_gen[0] is not None else None
     return batch_feats, batch_masks, ya, yg
 
-
 # ===== Training & Evaluation =====
-
-def train_loop(model, ldr, opt, loss_fn, dev, task):
+def train_loop(model, ldr, opt, loss_fn, dev):
     model.train()
     total_loss = 0.0
     for feats, masks, ya, yg in tqdm(ldr, desc='Train', leave=False):
-        feats = feats.to(dev)
+        feats, masks = feats.to(dev), masks.to(dev)
         opt.zero_grad()
-        outs = model(feats)
+        outs = model(feats, mask=masks)
         loss = 0.0
-        if task in ('age','both'):
+        if model.task in ('age', 'both'):
             ya = ya.to(dev).float()
             loss += loss_fn(outs['age'], ya)
-        if task in ('gender','both'):
+        if model.task in ('gender', 'both'):
             yg = yg.to(dev).float()
             loss += loss_fn(outs['gender'], yg)
         loss.backward()
@@ -163,32 +165,30 @@ def train_loop(model, ldr, opt, loss_fn, dev, task):
     return total_loss / len(ldr.dataset)
 
 @torch.no_grad()
-def eval_loop(model, ldr, dev, task):
+def eval_loop(model, ldr, dev):
     model.eval()
     preds, labels = {k: [] for k in ['age','gender','joint']}, {k: [] for k in ['age','gender','joint']}
     for feats, masks, ya, yg in tqdm(ldr, desc='Eval', leave=False):
-        feats = feats.to(dev)
-        outs = model(feats)
-        if task in ('age','both'):
+        feats, masks = feats.to(dev), masks.to(dev)
+        outs = model(feats, mask=masks)
+        if model.task in ('age','both'):
             pa = torch.sigmoid(outs['age'])
             preds['age'].append((pa>0.5).cpu().numpy())
             labels['age'].append(ya.numpy())
-        if task in ('gender','both'):
+        if model.task in ('gender','both'):
             pg = torch.sigmoid(outs['gender'])
             preds['gender'].append((pg>0.5).cpu().numpy())
             labels['gender'].append(yg.numpy())
-        if task=='both':
+        if model.task=='both':
             pa = torch.sigmoid(outs['age']); pg = torch.sigmoid(outs['gender'])
             scores = torch.stack([(1-pa)*(1-pg),(1-pa)*pg,pa*(1-pg),pa*pg],dim=1)
             jp = scores.argmax(dim=1).cpu().numpy()
             jl = (ya*2 + yg).numpy()
             preds['joint'].append(jp)
             labels['joint'].append(jl)
-    # concatenate
     for k in preds:
         if preds[k]: preds[k] = np.concatenate(preds[k]); labels[k] = np.concatenate(labels[k])
     return preds, labels
-
 
 # custom evaluation metrics
 def custom_metrics(preds, labels, task, losses=None):
@@ -197,68 +197,54 @@ def custom_metrics(preds, labels, task, losses=None):
         classnames = ['younger', 'older']
     elif task == 'gender':
         classnames = ['girl', 'boy']
-    elif task == 'both':
-        classnames = ['younger_girl', 'younger_boy', 'older_girl', 'older_boy']
     else:
-        raise ValueError(f"Unknown task: {task}")
+        classnames = ['younger_girl', 'younger_boy', 'older_girl', 'older_boy']
 
-    task_key = task if task != 'both' else 'joint'
-    labels_arr = np.array(labels[task_key])
-    preds_arr = np.array(preds[task_key])
-
-    avg = 'weighted' if task == 'both' else 'binary'
+    key = 'joint' if task=='both' else task
+    labels_arr = np.array(labels[key]); preds_arr = np.array(preds[key])
+    avg = 'weighted' if task=='both' else 'binary'
     results['acc_all'] = accuracy_score(labels_arr, preds_arr)
     results['f1_all'] = f1_score(labels_arr, preds_arr, average=avg)
-
-    for cls, cls_name in enumerate(classnames):
-        idx = np.where(labels_arr == cls)[0]
-        if len(idx) == 0:
-            results[f"acc_{cls_name}"] = None
-            results[f"f1_{cls_name}"] = None
-            continue
-        results[f"acc_{cls_name}"] = accuracy_score(labels_arr[idx], preds_arr[idx])
-        results[f"f1_{cls_name}"] = f1_score(labels_arr[idx], preds_arr[idx], average=avg)
-
+    for i, name in enumerate(classnames):
+        idx = np.where(labels_arr==i)[0]
+        if len(idx)==0:
+            results[f"acc_{name}"]=None; results[f"f1_{name}"]=None
+        else:
+            results[f"acc_{name}"]=accuracy_score(labels_arr[idx], preds_arr[idx])
+            results[f"f1_{name}"]=f1_score(labels_arr[idx], preds_arr[idx], average=avg)
     results['loss'] = losses
     return results['acc_all'], results
 
-
 # ===== Main Trainer =====
 def train_age_gender_classifier(args):
-    # Determine class names based on task
     train_ds, dev_ds = combine_datasets(args.dataset_path)
-    for d in [train_ds, dev_ds]:
+    for d in (train_ds, dev_ds):
         d.set_format(type='torch', columns=['input_features', 'y_age', 'y_gender'])
     train_loader = DataLoader(train_ds, batch_size=args.train_batch_size, shuffle=True, collate_fn=hf_collate_fn)
     dev_loader = DataLoader(dev_ds, batch_size=args.eval_batch_size, shuffle=False, collate_fn=hf_collate_fn)
 
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    model = BinaryCNN().to(device)
+    global dev
+    dev = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    model = BinaryCNN(task=args.task).to(dev)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=args.learning_rate, weight_decay=1e-5)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', factor=0.5, patience=2, min_lr=1e-6)
     loss_fn = nn.BCEWithLogitsLoss()
 
-    # Prepare results structure
-    max_epochs = args.num_train_epochs
     os.makedirs(args.results_dir, exist_ok=True)
     json_file = os.path.join(args.results_dir, f"{args.task}.json")
 
-    best_acc = 0.0
-    patience_counter = 0
-    losses = []
-    for epoch in trange(max_epochs, desc='Epochs'):
-        loss = train_loop(model, train_loader, optimizer, loss_fn, device, args.task)
+    best_acc, patience_counter, losses = 0.0, 0, []
+    best_results = {}
+    for epoch in trange(args.num_train_epochs, desc='Epochs'):
+        loss = train_loop(model, train_loader, optimizer, loss_fn, dev)
         losses.append(loss)
-        preds, labels = eval_loop(model, dev_loader, device, args.task)
-        # compute metrics
-        overall_acc, results = custom_metrics(preds, labels, args.task, losses=losses)
+        preds, labels = eval_loop(model, dev_loader, dev)
+        overall_acc, results = custom_metrics(preds, labels, args.task, losses)
         scheduler.step(overall_acc)
-
-        # conditional model save
+        print(f" --- loss={loss} | overall_acc={overall_acc}")
         if overall_acc > best_acc:
-            patience_counter = 0
-            best_acc = overall_acc
+            best_acc = overall_acc; patience_counter = 0; best_results = results
             if args.save_model:
                 torch.save(model.state_dict(), os.path.join(args.output_dir, f"{args.task}.pt"))
         else:
@@ -268,9 +254,7 @@ def train_age_gender_classifier(args):
                 break
 
         with open(json_file, 'w') as jf:
-            json.dump(results, jf, indent=2)
-
-
+            json.dump(best_results, jf, indent=2)
 
 # ===== CLI =====
 def main():
@@ -286,10 +270,7 @@ def main():
     parser.add_argument('--patience', type=int, default=10, help='Early stopping patience')
     parser.add_argument('--save_model', action='store_true', default=False)
     args = parser.parse_args()
-    if args.task=='both':
-        print(f"Training a model to classify clsu children's speech by age and gender.")
-    else:
-        print(f"Training a model to classify clsu children's speech by {args.task}.")
+    print(f"Training a model to classify cslu children's speech by {args.task}.")
     train_age_gender_classifier(args)
 
 if __name__ == '__main__':
