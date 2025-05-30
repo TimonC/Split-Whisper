@@ -202,7 +202,7 @@ def train_age_gender_classifier(args):
     best_metric = 0.0
     patience_counter = 0
 
-    for epoch in trange(args.num_train_epochs, desc='Epochs'):
+    for epoch in trange(max_epochs, desc='Epochs'):
         idx = epoch
         train_loss = train_loop(model, train_loader, optimizer, loss_fn, device, args.task)
         preds, labels = eval_loop(model, dev_loader, device, args.task)
@@ -235,6 +235,15 @@ def train_age_gender_classifier(args):
                 best_metric = metric
                 torch.save(model.state_dict(), os.path.join(args.output_dir, f"{args.model_name}.pt"))
 
+        # nicely formatted print
+        print(
+            f"Epoch {epoch+1}/{max_epochs} | "
+            f"Loss: {train_loss:.4f} | "
+            f"Age: Acc={acc_age:.3f if acc_age is not None else 'N/A'} F1={f1_age:.3f if f1_age is not None else 'N/A'} | "
+            f"Gender: Acc={acc_gen:.3f if acc_gen is not None else 'N/A'} F1={f1_gen:.3f if f1_gen is not None else 'N/A'} | "
+            f"Joint: Acc={acc_joint:.3f if acc_joint is not None else 'N/A'} F1={f1_joint:.3f if f1_joint is not None else 'N/A'}"
+        )
+
         # save results JSON each epoch
         with open(json_file, 'w') as jf:
             json.dump(results, jf, indent=2)
@@ -247,6 +256,7 @@ def train_age_gender_classifier(args):
         else:
             patience_counter += 1
             if patience_counter >= args.patience:
+                print("Early stopping triggered.")
                 break
 
 # ===== CLI =====
