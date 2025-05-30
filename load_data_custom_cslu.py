@@ -8,7 +8,7 @@ def load_data_custom_cslu(dataset_path, mode="train"):
         print(f"Loading development dataset from {dataset_path}/development")
         dev_dataset = Dataset.load_from_disk(f"{dataset_path}/development")
 
-        custom_dataset = DatasetDict({"train": train_dataset.shuffle(), "development": dev_dataset})
+        custom_dataset = DatasetDict({"train": train_dataset, "development": dev_dataset})
         print("Train and development datasets loaded")
         print(f"Found {len(custom_dataset['train'])} training examples and {len(custom_dataset['development'])} development examples")
     
