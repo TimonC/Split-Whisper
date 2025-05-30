@@ -143,7 +143,7 @@ def train_loop(model, ldr, opt, loss_fn, dev):
     for feats, masks, ya, yg in tqdm(ldr, desc='Train', leave=False):
         feats, masks = feats.to(dev, non_blocking=True), masks.to(dev, non_blocking=True)
         opt.zero_grad()
-        with autocast(dev.typ):
+        with autocast(dev.type):
             outs = model(feats, mask=masks)
             loss = 0.0
             if model.task in ('age', 'both'):
