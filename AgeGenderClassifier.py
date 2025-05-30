@@ -10,7 +10,7 @@ from sklearn.metrics import accuracy_score, f1_score
 from tqdm import tqdm, trange
 import torch.nn.functional as F
 from load_data_custom_cslu import load_data_custom_cslu
-
+from torch.cuda.amp import GradScaler, autocast
 # ===== Model =====
 class ResidualBlock(nn.Module):
     def __init__(self, in_channels, out_channels, stride=1, downsample=None):
@@ -135,23 +135,28 @@ def hf_collate_fn(batch):
     return batch_feats, batch_masks, ya, yg
 
 # ===== Training & Evaluation =====
+
 def train_loop(model, ldr, opt, loss_fn, dev):
     model.train()
+    scaler = GradScaler()
     total_loss = 0.0
     for feats, masks, ya, yg in tqdm(ldr, desc='Train', leave=False):
-        feats, masks = feats.to(dev), masks.to(dev)
+        feats, masks = feats.to(dev, non_blocking=True), masks.to(dev, non_blocking=True)
         opt.zero_grad()
-        outs = model(feats, mask=masks)
-        loss = 0.0
-        if model.task in ('age', 'both'):
-            ya = ya.to(dev).float()
-            loss += loss_fn(outs['age'], ya)
-        if model.task in ('gender', 'both'):
-            yg = yg.to(dev).float()
-            loss += loss_fn(outs['gender'], yg)
-        loss.backward()
+        with autocast():
+            outs = model(feats, mask=masks)
+            loss = 0.0
+            if model.task in ('age', 'both'):
+                ya = ya.to(dev, non_blocking=True).float()
+                loss += loss_fn(outs['age'], ya)
+            if model.task in ('gender', 'both'):
+                yg = yg.to(dev, non_blocking=True).float()
+                loss += loss_fn(outs['gender'], yg)
+        scaler.scale(loss).backward()
+        scaler.unscale_(opt)
         nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-        opt.step()
+        scaler.step(opt)
+        scaler.update()
         total_loss += loss.item() * feats.size(0)
     return total_loss / len(ldr.dataset)
 
@@ -211,8 +216,8 @@ def train_age_gender_classifier(args):
     train_ds, dev_ds = combine_datasets(args.dataset_path)
     for d in (train_ds, dev_ds):
         d.set_format(type='torch', columns=['input_features', 'y_age', 'y_gender'])
-    train_loader = DataLoader(train_ds, batch_size=args.train_batch_size, shuffle=True, collate_fn=hf_collate_fn)
-    dev_loader = DataLoader(dev_ds, batch_size=args.eval_batch_size, shuffle=False, collate_fn=hf_collate_fn)
+    train_loader = DataLoader(train_ds, batch_size=args.train_batch_size, shuffle=True, collate_fn=hf_collate_fn, num_workers=4, pin_memory=True)
+    dev_loader = DataLoader(dev_ds, batch_size=args.eval_batch_size, shuffle=False, collate_fn=hf_collate_fn, num_workers=4, pin_memory=True)
 
     global dev
     dev = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
