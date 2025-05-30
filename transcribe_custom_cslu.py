@@ -1,4 +1,4 @@
-from transformers import pipeline, WhisperForConditionalGeneration, WhisperTokenizer
+from transformers import pipeline, WhisperForConditionalGeneration, WhisperTokenizer, WhisperConfig, GenerationConfig
 from transformers import WhisperFeatureExtractor
 import os
 from evaluate import load
@@ -9,7 +9,7 @@ import argparse
 from datasets import Dataset, load_dataset, Audio
 import json 
 from datetime import datetime
-from transformers import WhisperConfig
+
 def transcribe(args):
     # Construct model names based on args
     base_model = f"{args.base_model}-{args.whisper_size}"
@@ -39,9 +39,9 @@ def transcribe(args):
 
     # Load model and pipeline
     metric = load("wer")
-    config = WhisperConfig.from_pretrained(finetuned_model)
-    config.forced_decoder_ids = None
-    model = WhisperForConditionalGeneration.from_pretrained(finetuned_model, config=config)
+    model = WhisperForConditionalGeneration.from_pretrained(finetuned_model)
+    generation_config = GenerationConfig.from_pretrained(finetuned_model)
+    generation_config.forced_decoder_ids = None
     pipe = pipeline(
         task="automatic-speech-recognition",
         model=model,
@@ -49,6 +49,7 @@ def transcribe(args):
         feature_extractor=WhisperFeatureExtractor.from_pretrained(base_model),
         device="cuda",
         chunk_length_s=30,
+        generation_config=generation_config,
     )
     if args.json_option=="all":
         data_splits = ["all_ages_all_genders", "older_all_genders", "younger_all_genders"]
