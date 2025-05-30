@@ -100,6 +100,7 @@ def train(args):
     data_collator = DataCollatorSpeechSeq2SeqWithPadding(processor=processor)
 
     if "en" not in args.base_model:
+        print("Not english!")
         model.config.forced_decoder_ids = None
     model.config.use_cache = False
     model.config.suppress_tokens = []
