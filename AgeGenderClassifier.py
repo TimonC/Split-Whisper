@@ -218,26 +218,8 @@ def train_age_gender_classifier(args):
     for d in (train_ds, dev_ds):
         d.set_format(type='torch', columns=['input_features', 'y_age', 'y_gender'])
 
-       
-    # --- Oversampling setup ---
-    if args.task == 'age':
-        labels = [int(l) for l in train_ds['y_age']]
-    elif args.task == 'gender':
-        labels = [int(l) for l in train_ds['y_gender']]
-    else:  # both → combine age and gender into joint label: 0-3
-        labels = [2 * int(a) + int(g) for a, g in zip(train_ds['y_age'], train_ds['y_gender'])]
-
-    label_counts = Counter(labels)
-    class_weights = {cls: 1.0 / count for cls, count in label_counts.items()}
-    sample_weights = [class_weights[label] for label in labels]
-
-    sampler = WeightedRandomSampler(
-        weights=sample_weights,
-        num_samples=len(sample_weights),
-        replacement=True
-    ) 
-    train_loader = DataLoader(train_ds, batch_size=args.train_batch_size, sampler=sampler,  collate_fn=hf_collate_fn, num_workers=4, pin_memory=True)
-    dev_loader = DataLoader(dev_ds, batch_size=args.eval_batch_size, shuffle=False, collate_fn=hf_collate_fn, num_workers=4, pin_memory=True)
+    train_loader = DataLoader(train_ds, batch_size=args.train_batch_size, collate_fn=hf_collate_fn, shuffle=True, num_workers=8, pin_memory=True)
+    dev_loader = DataLoader(dev_ds, batch_size=args.eval_batch_size, shuffle=False, collate_fn=hf_collate_fn, num_workers=8, pin_memory=True)
 
     global dev
     dev = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
