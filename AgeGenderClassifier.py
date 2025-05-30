@@ -105,7 +105,7 @@ def combine_datasets(dataset_path):
     class_names = ['younger_Girl', 'younger_Boy', 'older_Girl', 'older_Boy']
     all_train, all_dev = [], []
     for cls in class_names:
-        ds = load_data_custom_cslu(dataset_path, mode='train')
+        ds = load_data_custom_cslu(os.path.join(dataset_path, cls), mode='train')
         is_younger = 'younger' in cls.lower()
         is_girl = 'girl' in cls.lower()
         y_age = int(not is_younger)   # 1 = older, 0 = younger
