@@ -229,7 +229,7 @@ def train_age_gender_classifier(args):
 
     label_counts = Counter(labels)
     class_weights = {cls: 1.0 / count for cls, count in label_counts.items()}
-    sample_weights = [class_weights[label] for label in labels]
+    sample_weights = [class_weights[int(label)] for label in labels]
 
     sampler = WeightedRandomSampler(
         weights=sample_weights,
