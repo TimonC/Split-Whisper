@@ -24,8 +24,10 @@ def transcribe(args):
         
     if args.split_whisper_path is not None:
         finetuned_model = args.split_whisper_path
+        finetuned_model_name = os.path.basename(os.path.dirname(finetuned_model))
+    else:
+        finetuned_model_name = os.path.basename(finetuned_model)
     
-    finetuned_model_name = os.path.basename(finetuned_model)
     
 
 
