@@ -108,13 +108,12 @@ def combine_datasets(dataset_path):
 
     print("Loading datasets...")
 
-    for i in trange(len(class_names), desc="Classes", leave=True):
-        cls = class_names[i]
-        path = os.path.join(dataset_path, cls)
+    for cls, class_name in enumerate(tqdm(class_names, desc="Classes")):
+        path = os.path.join(dataset_path, class_name)
         ds = load_data_custom_cslu(path, mode="train")
 
-        is_younger = 'younger' in cls.lower()
-        is_girl = 'girl' in cls.lower()
+        is_younger = 'younger' in class_name.lower()
+        is_girl = 'girl' in class_name.lower()
         y_age = int(not is_younger)
         y_gender = int(not is_girl)
 
