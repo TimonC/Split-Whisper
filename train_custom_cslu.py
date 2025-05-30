@@ -133,7 +133,6 @@ def train(args):
         gradient_accumulation_steps=args.gradient_accumulation_steps,
         learning_rate=args.max_learning_rate,
         warmup_steps=args.warmup_steps,
-        max_steps=args.max_steps,
         num_train_epochs=args.num_train_epochs, 
         gradient_checkpointing=args.gradient_checkpointing,
         fp16=args.fp16,
