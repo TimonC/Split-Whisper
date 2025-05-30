@@ -25,14 +25,14 @@ def get_parser() -> argparse.ArgumentParser:
     parser.add_argument("--num_train_epochs", type=int, default=5)
     parser.add_argument("--train_batch_size", type=int, default=16)
     parser.add_argument("--gradient_accumulation_steps", type=int, default=1)
-    parser.add_argument("--eval_batch_size", type=int, default=8)
+    parser.add_argument("--eval_batch_size", type=int, default=16)
     parser.add_argument("--max_learning_rate", type=float, default=1e-5)
-    parser.add_argument("--max_grad_norm", type=float, default=0.5)
+    parser.add_argument("--max_grad_norm", type=float, default=1)
     parser.add_argument("--warmup_steps", type=int, default=500)
     parser.add_argument("--max_steps", type=int, default=4000)
     parser.add_argument("--eval_steps", type=int, default=None)
     parser.add_argument("--gradient_checkpointing", type=bool, default=True)
-    parser.add_argument("--fp16", type=bool, default=False)
+    parser.add_argument("--fp16", type=bool, default=True)
     parser.add_argument("--evaluation_strategy", type=str, default="steps")
     parser.add_argument("--logging_steps", type=int, default=None)
     parser.add_argument("--save_steps", type=int, default=None)
@@ -45,33 +45,30 @@ class DataCollatorSpeechSeq2SeqWithPadding:
     processor: Any
     padding_vector: torch.Tensor = None  # padding vector to detect padded frames
 
+    
     def __call__(self, features: List[Dict[str, Union[List[int], torch.Tensor]]]) -> Dict[str, torch.Tensor]:
+        # split inputs and labels since they have to be of different lengths and need different padding methods
+        # first treat the audio inputs by simply returning torch tensors
         input_features = [{"input_features": feature["input_features"]} for feature in features]
         batch = self.processor.feature_extractor.pad(input_features, return_tensors="pt")
 
-        # If padding_vector is not set, compute it as min values per feature dimension over the batch
-        if self.padding_vector is None:
-            self.padding_vector = batch["input_features"].min(dim=1).values.min(dim=0).values
-            # batch["input_features"].shape: (batch_size, seq_len, feature_dim)
-            # min(dim=1) => min across seq_len -> (batch_size, feature_dim)
-            # then min across batch_size -> (feature_dim,)
-
-        # Create attention mask by checking if each vector equals padding vector
-        # shape: (batch_size, seq_len, feature_dim)
-        is_padding = (batch["input_features"] == self.padding_vector).all(dim=-1)  # (batch_size, seq_len)
-        batch["attention_mask"] = (~is_padding).long()
-
+        # get the tokenized label sequences
         label_features = [{"input_ids": feature["labels"]} for feature in features]
+        # pad the labels to max length
         labels_batch = self.processor.tokenizer.pad(label_features, return_tensors="pt")
+
+        # replace padding with -100 to ignore loss correctly
         labels = labels_batch["input_ids"].masked_fill(labels_batch.attention_mask.ne(1), -100)
 
+        # if bos token is appended in previous tokenization step,
+        # cut bos token here as it's append later anyways
         if (labels[:, 0] == self.processor.tokenizer.bos_token_id).all().cpu().item():
             labels = labels[:, 1:]
 
         batch["labels"] = labels
 
         return batch
-
+    
 
 
 
