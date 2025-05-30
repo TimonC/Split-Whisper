@@ -6,7 +6,7 @@ import numpy as np
 import json
 from torch.utils.data import DataLoader
 from datasets import DatasetDict, Dataset, concatenate_datasets
-from sklearn.metrics import accuracy_score, classification_report
+from sklearn.metrics import accuracy_score, f1_score, classification_report
 from tqdm import tqdm, trange
 import torch.nn.functional as F
 
