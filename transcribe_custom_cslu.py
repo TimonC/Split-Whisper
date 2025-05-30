@@ -40,8 +40,7 @@ def transcribe(args):
     # Load model and pipeline
     metric = load("wer")
     model = WhisperForConditionalGeneration.from_pretrained(finetuned_model)
-    generation_config = GenerationConfig.from_pretrained(finetuned_model)
-    generation_config.forced_decoder_ids = None
+    model.generation_config.forced_decoder_ids = None  ##annoying deprecated thing to remove
     pipe = pipeline(
         task="automatic-speech-recognition",
         model=model,
@@ -49,7 +48,6 @@ def transcribe(args):
         feature_extractor=WhisperFeatureExtractor.from_pretrained(base_model),
         device="cuda",
         chunk_length_s=30,
-        generation_config=generation_config,
     )
     if args.json_option=="all":
         data_splits = ["all_ages_all_genders", "older_all_genders", "younger_all_genders"]
