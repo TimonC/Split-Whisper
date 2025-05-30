@@ -209,8 +209,8 @@ def train_age_gender_classifier(args):
         'f1_joint': [None] * max_epochs
     }
 
-    os.makedirs(os.path.join(args.output_dir, 'results', 'classifier'), exist_ok=True)
-    json_file = os.path.join(args.output_dir, 'results', 'classifier', f"{args.model_name}.json")
+    results_dir = os.makedirs(os.path.join(args.output_dir, 'results', 'classifier'), exist_ok=True)
+    json_file = os.path.join(results_dir, f"{args.task}.json")
 
     best_metric = 0.0
     patience_counter = 0
@@ -246,7 +246,7 @@ def train_age_gender_classifier(args):
             metric = acc_joint if args.task=='both' else (acc_age if args.task=='age' else acc_gen)
             if metric and metric > best_metric:
                 best_metric = metric
-                torch.save(model.state_dict(), os.path.join(args.output_dir, f"{args.model_name}.pt"))
+                torch.save(model.state_dict(), os.path.join(args.output_dir, f"{args.task}.pt"))
 
         # nicely formatted print
         print(
@@ -282,7 +282,6 @@ def main():
     parser.add_argument('--num_train_epochs', type=int, default=50)
     parser.add_argument('--learning_rate', type=float, default=1e-4)
     parser.add_argument('--task', type=str, choices=['age','gender','both'], default='both')
-    parser.add_argument('--model_name', type=str, default='classifier')
     parser.add_argument('--patience', type=int, default=10, help='Early stopping patience')
     parser.add_argument('--save_model', action='store_true', default=False)
     args = parser.parse_args()
