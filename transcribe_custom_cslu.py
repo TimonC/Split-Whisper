@@ -39,6 +39,7 @@ def transcribe(args):
     # Load model and pipeline
     metric = load("wer")
     model = WhisperForConditionalGeneration.from_pretrained(finetuned_model)
+    model.config.forced_decoder_ids = None ##i dont love doing this but i have to to avoid error
     pipe = pipeline(
         task="automatic-speech-recognition",
         model=model,
