@@ -93,18 +93,26 @@ class AgeGenderCNN(nn.Module):
 def combine_datasets(class_names, dataset_path):
     all_train, all_dev = [], []
     for cls in class_names:
-        path = os.path.join(dataset_path, cls)
-        ds = load_data_custom_cslu(path, "train")
+        ds = load_data_custom_cslu(cls, dataset_path)
+
         is_younger = 'younger' in cls.lower()
         is_girl = 'girl' in cls.lower()
-        y_age = int(not is_younger)
-        y_gender = int(is_girl)
+        y_age = int(not is_younger)   # 1 = older, 0 = younger
+        y_gender = int(is_girl)       # 1 = girl, 0 = boy
+
         for split, coll in [('train', all_train), ('development', all_dev)]:
-            tmp = ds[split].add_column('y_age', [y_age] * len(ds[split]))
+            # Reset indices and avoid caching here:
+            ds_split = ds[split].map(lambda x: x, load_from_cache_file=False)
+
+            # Now add columns without triggering flattening:
+            tmp = ds_split.add_column('y_age', [y_age] * len(ds_split))
             tmp = tmp.add_column('y_gender', [y_gender] * len(tmp))
             coll.append(tmp)
-    return concatenate_datasets(all_train), concatenate_datasets(all_dev)
 
+    train = concatenate_datasets(all_train)
+    dev = concatenate_datasets(all_dev)
+
+    return train, dev
 # ===== Collate =====
 def hf_collate_fn(batch):
     feats, ys_age, ys_gen, masks = [], [], [], []
