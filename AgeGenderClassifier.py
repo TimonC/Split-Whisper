@@ -189,7 +189,7 @@ def eval_loop(model, ldr, dev):
     return preds, labels
 
 # custom evaluation metrics
-def custom_metrics(preds, labels, task, losses=None):
+def custom_metrics(preds, labels, task):
     results = {}
     if task == 'age':
         classnames = ['younger', 'older']
@@ -210,7 +210,6 @@ def custom_metrics(preds, labels, task, losses=None):
         else:
             results[f"acc_{name}"]=accuracy_score(labels_arr[idx], preds_arr[idx])
             results[f"f1_{name}"]=f1_score(labels_arr[idx], preds_arr[idx], average=avg)
-    results['loss'] = losses
     return results['acc_all'], results
 
 # ===== Main Trainer =====
@@ -257,12 +256,10 @@ def train_age_gender_classifier(args):
         loss = train_loop(model, train_loader, optimizer, loss_fn, dev)
         losses.append(loss)
         preds, labels = eval_loop(model, dev_loader, dev)
-        overall_acc, results = custom_metrics(preds, labels, args.task, losses)
+        overall_acc, results = custom_metrics(preds, labels, args.task)
         scheduler.step(overall_acc)
         print(f" it{epoch} --- loss={loss} | overall_acc={overall_acc}")
         if overall_acc > best_acc:
-            with open(json_file, 'w') as jf:
-                json.dump(best_results, jf, indent=2)
             best_acc = overall_acc; patience_counter = 0; best_results = results
             if args.save_model:
                 torch.save(model.state_dict(), os.path.join(args.output_dir, f"{args.task}.pt"))
@@ -271,7 +268,9 @@ def train_age_gender_classifier(args):
             if patience_counter >= args.patience:
                 print("Early stopping triggered.")
                 break
-
+    best_results["losses"] = losses
+    with open(json_file, 'w') as jf:
+        json.dump(best_results, jf, indent=2)
 
 # ===== CLI =====
 def main():
