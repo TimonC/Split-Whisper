@@ -9,6 +9,7 @@ import argparse
 from datasets import Dataset, load_dataset, Audio
 import json 
 from datetime import datetime
+from transformers import WhisperConfig
 def transcribe(args):
     # Construct model names based on args
     base_model = f"{args.base_model}-{args.whisper_size}"
@@ -38,8 +39,9 @@ def transcribe(args):
 
     # Load model and pipeline
     metric = load("wer")
-    model = WhisperForConditionalGeneration.from_pretrained(finetuned_model)
-    model.config.forced_decoder_ids = None ##i dont love doing this but i have to to avoid error
+    config = WhisperConfig.from_pretrained(finetuned_model)
+    config.forced_decoder_ids = None
+    model = WhisperForConditionalGeneration.from_pretrained(finetuned_model, config=config)
     pipe = pipeline(
         task="automatic-speech-recognition",
         model=model,
