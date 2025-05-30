@@ -106,31 +106,35 @@ def combine_datasets(dataset_path):
 
     all_train, all_dev = [], []
 
-    print("Loading datasets...")
-
-    for cls, class_name in enumerate(tqdm(class_names, desc="Classes")):
+    for _, class_name in enumerate(tqdm(class_names, desc="Classes")):
         path = os.path.join(dataset_path, class_name)
         ds = load_data_custom_cslu(path, mode="train")
 
         is_younger = 'younger' in class_name.lower()
         is_girl = 'girl' in class_name.lower()
-        y_age = int(not is_younger)
-        y_gender = int(not is_girl)
+        y_age = int(not is_younger)   # 1 = older, 0 = younger
+        y_gender = int(not is_girl)   # 1 = boy, 0 = girl
 
         for split, coll in [('train', all_train), ('development', all_dev)]:
-            split_list = ds[split][:]
-            for item in split_list:
-                item['y_age'] = y_age
-                item['y_gender'] = y_gender
-            coll.extend(split_list)
+            # Convert dataset split to dict (no caching)
+            data_dict = ds[split].to_dict()
 
-    print("Combining datasets...")
-    train = Dataset.from_dict({k: [d[k] for d in all_train] for k in all_train[0].keys()})
-    dev = Dataset.from_dict({k: [d[k] for d in all_dev] for k in all_dev[0].keys()})
+            # Add new label fields
+            data_dict['y_age'] = [y_age] * len(data_dict['input_features'])
+            data_dict['y_gender'] = [y_gender] * len(data_dict['input_features'])
 
-    print(f"Train size: {len(train)}, Dev size: {len(dev)}")
+            # Create a new Dataset object from dict
+            tmp_ds = Dataset.from_dict(data_dict)
+
+            # Append this dataset to the collection list
+            coll.append(tmp_ds)
+
+    # Concatenate all datasets in each split
+    train = concatenate_datasets(all_train)
+    dev = concatenate_datasets(all_dev)
+
+    print(f"Combined train size: {len(train)}, dev size: {len(dev)}")
     return train, dev
-
 # ===== Collate =====
 def hf_collate_fn(batch):
     feats, ys_age, ys_gen, masks = [], [], [], []
