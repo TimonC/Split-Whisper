@@ -10,7 +10,7 @@ from sklearn.metrics import accuracy_score, f1_score
 from tqdm import tqdm, trange
 import torch.nn.functional as F
 from load_data_custom_cslu import load_data_custom_cslu
-from torch.cuda.amp import GradScaler, autocast
+from torch.amp import GradScaler, autocast
 # ===== Model =====
 class ResidualBlock(nn.Module):
     def __init__(self, in_channels, out_channels, stride=1, downsample=None):
@@ -138,12 +138,12 @@ def hf_collate_fn(batch):
 
 def train_loop(model, ldr, opt, loss_fn, dev):
     model.train()
-    scaler = GradScaler()
+    scaler = GradScaler(device_type='cuda' if dev.type == 'cuda' else 'cpu')
     total_loss = 0.0
     for feats, masks, ya, yg in tqdm(ldr, desc='Train', leave=False):
         feats, masks = feats.to(dev, non_blocking=True), masks.to(dev, non_blocking=True)
         opt.zero_grad()
-        with autocast():
+        with autocast(device_type='cuda' if dev.type == 'cuda' else 'cpu'):
             outs = model(feats, mask=masks)
             loss = 0.0
             if model.task in ('age', 'both'):
