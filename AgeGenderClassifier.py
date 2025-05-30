@@ -103,40 +103,20 @@ class BinaryCNN(nn.Module):
 # ===== Data Loading =====
 def combine_datasets(dataset_path):
     class_names = ['younger_Girl', 'younger_Boy', 'older_Girl', 'older_Boy']
-
     all_train, all_dev = [], []
-
-    # Precompute age and gender labels for each class_name
-    labels_map = {}
-    for class_name in class_names:
-        is_younger = 'younger' in class_name.lower()
-        is_girl = 'girl' in class_name.lower()
-        y_age = int(not is_younger)
-        y_gender = int(not is_girl)
-        labels_map[class_name] = (y_age, y_gender)
-
-    for class_name in tqdm(class_names, desc="Classes"):
-        path = os.path.join(dataset_path, class_name)
-        ds = load_data_custom_cslu(path, mode="train")
-
-        y_age, y_gender = labels_map[class_name]
-
+    for cls in class_names:
+        ds = load_data_custom_cslu(cls, dataset_path)
+        is_younger = 'younger' in cls.lower()
+        is_girl = 'girl' in cls.lower()
+        y_age = int(not is_younger)   # 1 = older, 0 = younger
+        y_gender = int(not is_girl)       # 1 = boy, 0 = girl
         for split, coll in [('train', all_train), ('development', all_dev)]:
-            data_dict = ds[split].to_dict()
-
-            n = len(data_dict['input_features'])
-            data_dict['y_age'] = [y_age] * n
-            data_dict['y_gender'] = [y_gender] * n
-
-            tmp_ds = Dataset.from_dict(data_dict)
-            coll.append(tmp_ds)
-
+            tmp = ds[split].add_column('y_age', [y_age] * len(ds[split]))
+            tmp = tmp.add_column('y_gender', [y_gender] * len(tmp))
+            coll.append(tmp)
     train = concatenate_datasets(all_train)
     dev = concatenate_datasets(all_dev)
-
-    print(f"Combined train size: {len(train)}, dev size: {len(dev)}")
     return train, dev
-
 # ===== Collate =====
 def hf_collate_fn(batch):
     feats, ys_age, ys_gen, masks = [], [], [], []
