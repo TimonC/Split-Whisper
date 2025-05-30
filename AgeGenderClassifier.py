@@ -138,12 +138,12 @@ def hf_collate_fn(batch):
 
 def train_loop(model, ldr, opt, loss_fn, dev):
     model.train()
-    scaler = GradScaler(device_type='cuda' if dev.type == 'cuda' else 'cpu')
+    scaler = GradScaler()
     total_loss = 0.0
     for feats, masks, ya, yg in tqdm(ldr, desc='Train', leave=False):
         feats, masks = feats.to(dev, non_blocking=True), masks.to(dev, non_blocking=True)
         opt.zero_grad()
-        with autocast(device_type='cuda' if dev.type == 'cuda' else 'cpu'):
+        with autocast():
             outs = model(feats, mask=masks)
             loss = 0.0
             if model.task in ('age', 'both'):
