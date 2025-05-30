@@ -240,6 +240,8 @@ def train_age_gender_classifier(args):
         scheduler.step(overall_acc)
         print(f" --- loss={loss} | overall_acc={overall_acc}")
         if overall_acc > best_acc:
+            with open(json_file, 'w') as jf:
+                json.dump(best_results, jf, indent=2)
             best_acc = overall_acc; patience_counter = 0; best_results = results
             if args.save_model:
                 torch.save(model.state_dict(), os.path.join(args.output_dir, f"{args.task}.pt"))
@@ -249,8 +251,6 @@ def train_age_gender_classifier(args):
                 print("Early stopping triggered.")
                 break
 
-        with open(json_file, 'w') as jf:
-            json.dump(best_results, jf, indent=2)
 
 # ===== CLI =====
 def main():
