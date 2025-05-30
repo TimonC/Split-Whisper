@@ -236,7 +236,7 @@ def train_age_gender_classifier(args):
         num_samples=len(sample_weights),
         replacement=True
     ) 
-    train_loader = DataLoader(train_ds, batch_size=args.train_batch_size, collate_fn=hf_collate_fn, num_workers=4, pin_memory=True)
+    train_loader = DataLoader(train_ds, batch_size=args.train_batch_size, sampler=sampler,  collate_fn=hf_collate_fn, num_workers=4, pin_memory=True)
     dev_loader = DataLoader(dev_ds, batch_size=args.eval_batch_size, shuffle=False, collate_fn=hf_collate_fn, num_workers=4, pin_memory=True)
 
     global dev
