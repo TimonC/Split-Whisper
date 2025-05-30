@@ -106,30 +106,31 @@ def combine_datasets(dataset_path):
 
     all_train, all_dev = [], []
 
-    for _, class_name in enumerate(tqdm(class_names, desc="Classes")):
+    # Precompute age and gender labels for each class_name
+    labels_map = {}
+    for class_name in class_names:
+        is_younger = 'younger' in class_name.lower()
+        is_girl = 'girl' in class_name.lower()
+        y_age = int(not is_younger)
+        y_gender = int(not is_girl)
+        labels_map[class_name] = (y_age, y_gender)
+
+    for class_name in tqdm(class_names, desc="Classes"):
         path = os.path.join(dataset_path, class_name)
         ds = load_data_custom_cslu(path, mode="train")
 
-        is_younger = 'younger' in class_name.lower()
-        is_girl = 'girl' in class_name.lower()
-        y_age = int(not is_younger)   # 1 = older, 0 = younger
-        y_gender = int(not is_girl)   # 1 = boy, 0 = girl
+        y_age, y_gender = labels_map[class_name]
 
         for split, coll in [('train', all_train), ('development', all_dev)]:
-            # Convert dataset split to dict (no caching)
             data_dict = ds[split].to_dict()
 
-            # Add new label fields
-            data_dict['y_age'] = [y_age] * len(data_dict['input_features'])
-            data_dict['y_gender'] = [y_gender] * len(data_dict['input_features'])
+            n = len(data_dict['input_features'])
+            data_dict['y_age'] = [y_age] * n
+            data_dict['y_gender'] = [y_gender] * n
 
-            # Create a new Dataset object from dict
             tmp_ds = Dataset.from_dict(data_dict)
-
-            # Append this dataset to the collection list
             coll.append(tmp_ds)
 
-    # Concatenate all datasets in each split
     train = concatenate_datasets(all_train)
     dev = concatenate_datasets(all_dev)
 
