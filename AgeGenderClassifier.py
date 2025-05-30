@@ -11,6 +11,8 @@ from tqdm import tqdm, trange
 import torch.nn.functional as F
 from load_data_custom_cslu import load_data_custom_cslu
 from torch.amp import GradScaler, autocast
+from torch.utils.data import WeightedRandomSampler
+from collections import Counter
 # ===== Model =====
 class ResidualBlock(nn.Module):
     def __init__(self, in_channels, out_channels, stride=1, downsample=None):
@@ -216,7 +218,26 @@ def train_age_gender_classifier(args):
     train_ds, dev_ds = combine_datasets(args.dataset_path)
     for d in (train_ds, dev_ds):
         d.set_format(type='torch', columns=['input_features', 'y_age', 'y_gender'])
-    train_loader = DataLoader(train_ds, batch_size=args.train_batch_size, shuffle=True, collate_fn=hf_collate_fn, num_workers=4, pin_memory=True)
+
+       
+    # --- Oversampling setup ---
+    if args.task == 'age':
+        labels = train_ds['y_age']
+    elif args.task == 'gender':
+        labels = train_ds['y_gender']
+    else:  # both → combine age and gender into joint label: 0-3
+        labels = [2 * a + g for a, g in zip(train_ds['y_age'], train_ds['y_gender'])]
+
+    label_counts = Counter(labels)
+    class_weights = {cls: 1.0 / count for cls, count in label_counts.items()}
+    sample_weights = [class_weights[label] for label in labels]
+
+    sampler = WeightedRandomSampler(
+        weights=sample_weights,
+        num_samples=len(sample_weights),
+        replacement=True
+    ) 
+    train_loader = DataLoader(train_ds, batch_size=args.train_batch_size, sampler=sampler,  collate_fn=hf_collate_fn, num_workers=4, pin_memory=True)
     dev_loader = DataLoader(dev_ds, batch_size=args.eval_batch_size, shuffle=False, collate_fn=hf_collate_fn, num_workers=4, pin_memory=True)
 
     global dev
@@ -238,7 +259,7 @@ def train_age_gender_classifier(args):
         preds, labels = eval_loop(model, dev_loader, dev)
         overall_acc, results = custom_metrics(preds, labels, args.task, losses)
         scheduler.step(overall_acc)
-        print(f" --- loss={loss} | overall_acc={overall_acc}")
+        print(f" it{epoch} --- loss={loss} | overall_acc={overall_acc}")
         if overall_acc > best_acc:
             with open(json_file, 'w') as jf:
                 json.dump(best_results, jf, indent=2)
