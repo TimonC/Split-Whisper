@@ -175,7 +175,14 @@ def eval_loop(model, ldr, dev, task):
 
 # ===== Main Trainer =====
 def train_age_gender_classifier(args):
-    true_class_names = ["younger_Boy", "younger_Girl", "older_Boy", "older_Girl"]
+    # Determine class names based on task
+    if args.task == 'age':
+        true_class_names = ['younger_all_genders', 'older_all_genders']
+    elif args.task == 'gender':
+        true_class_names = ['all_ages_Boy', 'all_ages_Girl']
+    else:
+        true_class_names = ['younger_Boy', 'younger_Girl', 'older_Boy', 'older_Girl']
+
     train_ds, dev_ds = combine_datasets(true_class_names, args.dataset_path)
     for d in [train_ds, dev_ds]:
         d.set_format(type='torch', columns=['input_features', 'y_age', 'y_gender'])
@@ -277,8 +284,7 @@ def main():
     parser.add_argument('--task', type=str, choices=['age','gender','both'], default='both')
     parser.add_argument('--model_name', type=str, default='classifier')
     parser.add_argument('--patience', type=int, default=10, help='Early stopping patience')
-    parser.add_argument('--save_model', action='store_true', default=False,
-                        help='Whether to save the model checkpoints')
+    parser.add_argument('--save_model', action='store_true', default=False)
     args = parser.parse_args()
     train_age_gender_classifier(args)
 
