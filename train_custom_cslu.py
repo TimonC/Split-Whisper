@@ -34,7 +34,7 @@ def get_parser() -> argparse.ArgumentParser:
     parser.add_argument("--gradient_checkpointing", type=bool, default=True)
     parser.add_argument("--fp16", type=bool, default=True)
     parser.add_argument("--evaluation_strategy", type=str, default="steps")
-    parser.add_argument("--logging_steps", type=int, default=None)
+    parser.add_argument("--logging_steps", type=int, default=100)
     parser.add_argument("--save_steps", type=int, default=None)
     parser.add_argument("--patience", type=int, default=5)
     return parser
