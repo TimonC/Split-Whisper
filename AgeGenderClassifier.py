@@ -318,6 +318,12 @@ def train_age_gender_classifier(args):
                 break
 
     best_results["losses"] = losses
+
+    for k, v in best_results.items():
+        if isinstance(v, torch.Tensor):
+            best_results[k] = v.item()
+        elif isinstance(v, list) and any(isinstance(x, torch.Tensor) for x in v):
+            best_results[k] = [x.item() if isinstance(x, torch.Tensor) else x for x in v]
     with open(json_file, 'w') as jf:
         json.dump(best_results, jf, indent=2)
 # ===== CLI =====
