@@ -13,6 +13,7 @@ from load_data_custom_cslu import load_data_custom_cslu
 from torch.amp import GradScaler, autocast
 from torch.utils.data import WeightedRandomSampler
 from collections import Counter
+
 # ===== Model =====
 class BinaryCNN(nn.Module):
     def __init__(self, task='both'):
@@ -37,6 +38,8 @@ class BinaryCNN(nn.Module):
         )
         self.age_head = nn.Linear(32, 1)
         self.gender_head = nn.Linear(32, 1)
+        # NEW joint group head for 4 classes (younger_girl, younger_boy, older_girl, older_boy)
+        self.group_head = nn.Linear(32, 4)
 
     def _make_layer(self, in_c, out_c, stride=1):
         return nn.Sequential(
@@ -72,6 +75,8 @@ class BinaryCNN(nn.Module):
             outputs['age'] = self.age_head(x).squeeze(1)
         if self.task in ('gender', 'both'):
             outputs['gender'] = self.gender_head(x).squeeze(1)
+        if self.task == 'both':
+            outputs['group'] = self.group_head(x)  # NEW joint prediction logits
         return outputs
 
 # ===== Data Loading =====
@@ -91,6 +96,7 @@ def combine_datasets(dataset_path):
     train = concatenate_datasets(all_train)
     dev = concatenate_datasets(all_dev)
     return train, dev
+
 # ===== Collate =====
 def hf_collate_fn(batch):
     feats, ys_age, ys_gen, masks = [], [], [], []
@@ -131,8 +137,9 @@ def custom_metrics(preds, labels, task):
             results[f"acc_{name}"]=accuracy_score(labels_arr[idx], preds_arr[idx])
             results[f"f1_{name}"]=f1_score(labels_arr[idx], preds_arr[idx], average=avg)
     return results['acc_all'], results
+
 # ===== Training & Evaluation =====
-def train_loop(model, loader, optimizer, loss_fn_age, loss_fn_gender, device):
+def train_loop(model, loader, optimizer, loss_fn_age, loss_fn_gender, loss_fn_group, device):
     model.train()
     scaler = GradScaler()
     total_loss = 0.0
@@ -148,6 +155,9 @@ def train_loop(model, loader, optimizer, loss_fn_age, loss_fn_gender, device):
             if model.task in ('gender', 'both'):
                 yg = yg.to(device, non_blocking=True).float()
                 loss += loss_fn_gender(outputs['gender'], yg)
+            if model.task == 'both':
+                group_labels = (ya.long() * 2 + yg.long()).to(device)
+                loss += loss_fn_group(outputs['group'], group_labels)
         scaler.scale(loss).backward()
         scaler.unscale_(optimizer)
         nn.utils.clip_grad_norm_(model.parameters(), 1.0)
@@ -173,10 +183,8 @@ def eval_loop(model, loader, device):
             preds['gender'].append((pg>0.5).cpu().numpy())
             labels['gender'].append(yg.numpy())
         if model.task == 'both':
-            pa = torch.sigmoid(outputs['age'])
-            pg = torch.sigmoid(outputs['gender'])
-            scores = torch.stack([(1-pa)*(1-pg),(1-pa)*pg,pa*(1-pg),pa*pg], dim=1)
-            jp = scores.argmax(dim=1).cpu().numpy()
+            group_logits = outputs['group']
+            jp = group_logits.argmax(dim=1).cpu().numpy()
             jl = (ya*2 + yg).numpy()
             preds['joint'].append(jp)
             labels['joint'].append(jl)
@@ -192,6 +200,8 @@ def train_age_gender_classifier(args):
     for d in (train_ds, dev_ds):
         d.set_format(type='torch', columns=['input_features', 'y_age', 'y_gender'])
 
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
     y_age = torch.tensor(train_ds['y_age'])
     y_gender = torch.tensor(train_ds['y_gender'])
 
@@ -202,6 +212,13 @@ def train_age_gender_classifier(args):
 
     loss_fn_age = nn.BCEWithLogitsLoss(pos_weight=age_pos_weight)
     loss_fn_gender = nn.BCEWithLogitsLoss(pos_weight=gender_pos_weight)
+
+    # Compute group class weights for CrossEntropyLoss
+    group_labels = y_age * 2 + y_gender
+    counts = Counter(group_labels.tolist())
+    total = sum(counts.values())
+    weights = torch.tensor([total / counts[i] for i in range(4)], dtype=torch.float32).to(device)
+    loss_fn_group = nn.CrossEntropyLoss(weight=weights)
 
     train_loader = DataLoader(
         train_ds,
@@ -220,7 +237,6 @@ def train_age_gender_classifier(args):
         pin_memory=True
     )
 
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model = BinaryCNN(task=args.task).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.learning_rate, weight_decay=1e-5)
 
@@ -232,7 +248,7 @@ def train_age_gender_classifier(args):
     best_results = {}
 
     for epoch in trange(args.num_train_epochs, desc='Epochs'):
-        loss = train_loop(model, train_loader, optimizer, loss_fn_age, loss_fn_gender, device)
+        loss = train_loop(model, train_loader, optimizer, loss_fn_age, loss_fn_gender, loss_fn_group, device)
         losses.append(loss)
 
         preds, labels = eval_loop(model, dev_loader, device)
@@ -245,6 +261,7 @@ def train_age_gender_classifier(args):
             patience_counter = 0
             best_results = results
             if args.save_model:
+                os.makedirs(args.output_dir, exist_ok=True)
                 torch.save(model.state_dict(), os.path.join(args.output_dir, f"{args.task}.pt"))
         else:
             patience_counter += 1
