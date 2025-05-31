@@ -15,6 +15,36 @@ from torch.utils.data import WeightedRandomSampler
 from collections import Counter
 
 # ===== Model =====
+class ResidualBlock(nn.Module):
+    def __init__(self, in_c, out_c, stride=1):
+        super().__init__()
+        self.conv1 = nn.Conv2d(in_c, out_c, kernel_size=3, stride=stride, padding=1, bias=False)
+        self.bn1   = nn.BatchNorm2d(out_c)
+        self.relu  = nn.ReLU(inplace=True)
+        self.conv2 = nn.Conv2d(out_c, out_c, kernel_size=3, stride=1, padding=1, bias=False)
+        self.bn2   = nn.BatchNorm2d(out_c)
+
+        self.skip = nn.Identity()
+        if in_c != out_c or stride != 1:
+            self.skip = nn.Sequential(
+                nn.Conv2d(in_c, out_c, kernel_size=1, stride=stride, bias=False),
+                nn.BatchNorm2d(out_c)
+            )
+
+    def forward(self, x):
+        identity = self.skip(x)
+        out = self.conv1(x)
+        out = self.bn1(out)
+        out = self.relu(out)
+
+        out = self.conv2(out)
+        out = self.bn2(out)
+
+        out += identity
+        out = self.relu(out)
+        return out
+
+
 class BinaryCNN(nn.Module):
     def __init__(self, task='both'):
         super().__init__()
@@ -38,37 +68,32 @@ class BinaryCNN(nn.Module):
         )
         self.age_head    = nn.Linear(32, 1)
         self.gender_head = nn.Linear(32, 1)
-        # Joint 4‐class head: younger_girl, younger_boy, older_girl, older_boy
         self.group_head  = nn.Linear(32, 4)
 
     def _make_layer(self, in_c, out_c, stride=1):
-        return nn.Sequential(
-            nn.Conv2d(in_c, out_c, 3, stride=stride, padding=1, bias=False),
-            nn.BatchNorm2d(out_c),
-            nn.ReLU(inplace=True)
-        )
+        return ResidualBlock(in_c, out_c, stride=stride)
 
     def downsample_mask(self, mask, target_length):
-        m = mask.unsqueeze(1).float()  # (N,1,T_in)
+        m = mask.unsqueeze(1).float()
         factor = m.size(-1) // target_length
         if factor == 0:
             factor = 1
         m_ds = F.avg_pool1d(m, kernel_size=factor, stride=factor, ceil_mode=True)
-        return (m_ds > 0.5).squeeze(1)  # (N, T_out)
+        return (m_ds > 0.5).squeeze(1)
 
     def forward(self, x, mask=None):
         x = self.initial(x)
         x = self.layer1(x)
         x = self.layer2(x)
-        x = self.layer3(x)  # (N, C, F, T_out)
+        x = self.layer3(x)
 
         if mask is not None:
             T_out = x.size(-1)
-            m = self.downsample_mask(mask, T_out)  # (N, T_out)
-            m = m.unsqueeze(1).unsqueeze(2)        # (N,1,1,T_out)
-            x = x * m                              # broadcast over C, F
+            m = self.downsample_mask(mask, T_out)
+            m = m.unsqueeze(1).unsqueeze(2)
+            x = x * m
 
-        x = self.shared_fc(x)  # → (N, 32)
+        x = self.shared_fc(x)
 
         outputs = {}
         if self.task in ('age', 'both'):
@@ -76,7 +101,7 @@ class BinaryCNN(nn.Module):
         if self.task in ('gender', 'both'):
             outputs['gender'] = self.gender_head(x).squeeze(1)
         if self.task == 'both':
-            outputs['group'] = self.group_head(x)  # Joint logits
+            outputs['group'] = self.group_head(x)
         return outputs
 
 # ===== Data Loading =====
