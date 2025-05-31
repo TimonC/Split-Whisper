@@ -108,58 +108,6 @@ def hf_collate_fn(batch):
     yg = torch.tensor(ys_gen) if ys_gen[0] is not None else None
     return batch_feats, batch_masks, ya, yg
 
-# ===== Training & Evaluation =====
-
-def train_loop(model, ldr, opt, loss_fn, dev):
-    model.train()
-    scaler = GradScaler()
-    total_loss = 0.0
-    for feats, masks, ya, yg in tqdm(ldr, desc='Train', leave=False):
-        feats, masks = feats.to(dev, non_blocking=True), masks.to(dev, non_blocking=True)
-        opt.zero_grad()
-        with autocast(dev.type):
-            outs = model(feats, mask=masks)
-            loss = 0.0
-            if model.task in ('age', 'both'):
-                ya = ya.to(dev, non_blocking=True).float()
-                loss += loss_fn(outs['age'], ya)
-            if model.task in ('gender', 'both'):
-                yg = yg.to(dev, non_blocking=True).float()
-                loss += loss_fn(outs['gender'], yg)
-        scaler.scale(loss).backward()
-        scaler.unscale_(opt)
-        nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-        scaler.step(opt)
-        scaler.update()
-        total_loss += loss.item() * feats.size(0)
-    return total_loss / len(ldr.dataset)
-
-@torch.no_grad()
-def eval_loop(model, ldr, dev):
-    model.eval()
-    preds, labels = {k: [] for k in ['age','gender','joint']}, {k: [] for k in ['age','gender','joint']}
-    for feats, masks, ya, yg in tqdm(ldr, desc='Eval', leave=False):
-        feats, masks = feats.to(dev), masks.to(dev)
-        outs = model(feats, mask=masks)
-        if model.task in ('age','both'):
-            pa = torch.sigmoid(outs['age'])
-            preds['age'].append((pa>0.5).cpu().numpy())
-            labels['age'].append(ya.numpy())
-        if model.task in ('gender','both'):
-            pg = torch.sigmoid(outs['gender'])
-            preds['gender'].append((pg>0.5).cpu().numpy())
-            labels['gender'].append(yg.numpy())
-        if model.task=='both':
-            pa = torch.sigmoid(outs['age']); pg = torch.sigmoid(outs['gender'])
-            scores = torch.stack([(1-pa)*(1-pg),(1-pa)*pg,pa*(1-pg),pa*pg],dim=1)
-            jp = scores.argmax(dim=1).cpu().numpy()
-            jl = (ya*2 + yg).numpy()
-            preds['joint'].append(jp)
-            labels['joint'].append(jl)
-    for k in preds:
-        if preds[k]: preds[k] = np.concatenate(preds[k]); labels[k] = np.concatenate(labels[k])
-    return preds, labels
-
 # custom evaluation metrics
 def custom_metrics(preds, labels, task):
     results = {}
@@ -183,56 +131,119 @@ def custom_metrics(preds, labels, task):
             results[f"acc_{name}"]=accuracy_score(labels_arr[idx], preds_arr[idx])
             results[f"f1_{name}"]=f1_score(labels_arr[idx], preds_arr[idx], average=avg)
     return results['acc_all'], results
+# ===== Training & Evaluation =====
+def train_loop(model, loader, optimizer, loss_fn_age, loss_fn_gender, device):
+    model.train()
+    scaler = GradScaler()
+    total_loss = 0.0
+    for feats, masks, ya, yg in tqdm(loader, desc='Train', leave=False):
+        feats, masks = feats.to(device, non_blocking=True), masks.to(device, non_blocking=True)
+        optimizer.zero_grad()
+        with autocast(device.type):
+            outputs = model(feats, mask=masks)
+            loss = 0.0
+            if model.task in ('age', 'both'):
+                ya = ya.to(device, non_blocking=True).float()
+                loss += loss_fn_age(outputs['age'], ya)
+            if model.task in ('gender', 'both'):
+                yg = yg.to(device, non_blocking=True).float()
+                loss += loss_fn_gender(outputs['gender'], yg)
+        scaler.scale(loss).backward()
+        scaler.unscale_(optimizer)
+        nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+        scaler.step(optimizer)
+        scaler.update()
+        total_loss += loss.item() * feats.size(0)
+    return total_loss / len(loader.dataset)
 
-# ===== Main Trainer =====
+
+@torch.no_grad()
+def eval_loop(model, loader, device):
+    model.eval()
+    preds, labels = {k: [] for k in ['age','gender','joint']}, {k: [] for k in ['age','gender','joint']}
+    for feats, masks, ya, yg in tqdm(loader, desc='Eval', leave=False):
+        feats, masks = feats.to(device), masks.to(device)
+        outputs = model(feats, mask=masks)
+        if model.task in ('age','both'):
+            pa = torch.sigmoid(outputs['age'])
+            preds['age'].append((pa>0.5).cpu().numpy())
+            labels['age'].append(ya.numpy())
+        if model.task in ('gender','both'):
+            pg = torch.sigmoid(outputs['gender'])
+            preds['gender'].append((pg>0.5).cpu().numpy())
+            labels['gender'].append(yg.numpy())
+        if model.task == 'both':
+            pa = torch.sigmoid(outputs['age'])
+            pg = torch.sigmoid(outputs['gender'])
+            scores = torch.stack([(1-pa)*(1-pg),(1-pa)*pg,pa*(1-pg),pa*pg], dim=1)
+            jp = scores.argmax(dim=1).cpu().numpy()
+            jl = (ya*2 + yg).numpy()
+            preds['joint'].append(jp)
+            labels['joint'].append(jl)
+    for k in preds:
+        if preds[k]:
+            preds[k] = np.concatenate(preds[k])
+            labels[k] = np.concatenate(labels[k])
+    return preds, labels
+
+
 def train_age_gender_classifier(args):
     train_ds, dev_ds = combine_datasets(args.dataset_path)
     for d in (train_ds, dev_ds):
         d.set_format(type='torch', columns=['input_features', 'y_age', 'y_gender'])
 
-       
-    # --- Oversampling setup ---
-    if args.task == 'age':
-        labels = [int(l) for l in train_ds['y_age']]
-    elif args.task == 'gender':
-        labels = [int(l) for l in train_ds['y_gender']]
-    else:  # both → combine age and gender into joint label: 0-3
-        labels = [2 * int(a) + int(g) for a, g in zip(train_ds['y_age'], train_ds['y_gender'])]
+    y_age = torch.tensor(train_ds['y_age'])
+    y_gender = torch.tensor(train_ds['y_gender'])
 
-    label_counts = Counter(labels)
-    class_weights = {cls: 1.0 / count for cls, count in label_counts.items()}
-    sample_weights = [class_weights[label] for label in labels]
+    age_pos_weight = ((y_age == 0).sum()) / ((y_age == 1).sum())
+    gender_pos_weight = ((y_gender == 0).sum()) / ((y_gender == 1).sum())
+    age_pos_weight    = age_pos_weight.to(device)
+    gender_pos_weight = gender_pos_weight.to(device)
 
-    sampler = WeightedRandomSampler(
-        weights=sample_weights,
-        num_samples=len(sample_weights),
-        replacement=True
-    ) 
-    train_loader = DataLoader(train_ds, batch_size=args.train_batch_size, sampler=sampler,  collate_fn=hf_collate_fn, num_workers=4, pin_memory=True)
-    dev_loader = DataLoader(dev_ds, batch_size=args.eval_batch_size, shuffle=False, collate_fn=hf_collate_fn, num_workers=4, pin_memory=True)
+    loss_fn_age = nn.BCEWithLogitsLoss(pos_weight=age_pos_weight)
+    loss_fn_gender = nn.BCEWithLogitsLoss(pos_weight=gender_pos_weight)
 
-    global dev
-    dev = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    model = BinaryCNN(task=args.task).to(dev)
+    train_loader = DataLoader(
+        train_ds,
+        batch_size=args.train_batch_size,
+        shuffle=True,
+        collate_fn=hf_collate_fn,
+        num_workers=4,
+        pin_memory=True
+    )
+    dev_loader = DataLoader(
+        dev_ds,
+        batch_size=args.eval_batch_size,
+        shuffle=False,
+        collate_fn=hf_collate_fn,
+        num_workers=4,
+        pin_memory=True
+    )
 
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    model = BinaryCNN(task=args.task).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.learning_rate, weight_decay=1e-5)
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', factor=0.5, patience=2, min_lr=1e-6)
-    loss_fn = nn.BCEWithLogitsLoss()
 
     os.makedirs(args.results_dir, exist_ok=True)
     json_file = os.path.join(args.results_dir, f"{args.task}.json")
 
-    best_acc, patience_counter, losses = 0.0, 0, []
+    best_acc, patience_counter = 0.0, 0
+    losses = []
     best_results = {}
+
     for epoch in trange(args.num_train_epochs, desc='Epochs'):
-        loss = train_loop(model, train_loader, optimizer, loss_fn, dev)
+        loss = train_loop(model, train_loader, optimizer, loss_fn_age, loss_fn_gender, device)
         losses.append(loss)
-        preds, labels = eval_loop(model, dev_loader, dev)
+
+        preds, labels = eval_loop(model, dev_loader, device)
         overall_acc, results = custom_metrics(preds, labels, args.task)
-        scheduler.step(overall_acc)
-        print(f" it{epoch} --- loss={loss} | overall_acc={overall_acc}")
+
+        print(f"Epoch {epoch}: loss={loss:.4f} | overall_acc={overall_acc:.4f}")
+
         if overall_acc > best_acc:
-            best_acc = overall_acc; patience_counter = 0; best_results = results
+            best_acc = overall_acc
+            patience_counter = 0
+            best_results = results
             if args.save_model:
                 torch.save(model.state_dict(), os.path.join(args.output_dir, f"{args.task}.pt"))
         else:
@@ -240,6 +251,7 @@ def train_age_gender_classifier(args):
             if patience_counter >= args.patience:
                 print("Early stopping triggered.")
                 break
+
     best_results["losses"] = losses
     with open(json_file, 'w') as jf:
         json.dump(best_results, jf, indent=2)
