@@ -237,8 +237,8 @@ def train_age_gender_classifier(args):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     # Compute pos_weight for BCE losses (unchanged)
-    y_age = torch.tensor(train_ds['y_age'])
-    y_gender = torch.tensor(train_ds['y_gender'])
+    y_age = train_ds['y_age'].clone()
+    y_gender = train_ds['y_gender'].clone()
     age_pos_weight = ((y_age == 0).sum()) / ((y_age == 1).sum())
     gender_pos_weight = ((y_gender == 0).sum()) / ((y_gender == 1).sum())
     age_pos_weight = age_pos_weight.to(device)
