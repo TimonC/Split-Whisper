@@ -22,7 +22,7 @@ def get_parser() -> argparse.ArgumentParser:
     parser.add_argument("--data_split", type=str, default="all_ages_all_genders")
     parser.add_argument("--output_dir", type=str, default="./fine-tuned-whisper")
 
-    parser.add_argument("--num_train_epochs", type=int, default=5)
+    parser.add_argument("--num_train_epochs", type=int, default=0)
     parser.add_argument("--train_batch_size", type=int, default=16)
     parser.add_argument("--gradient_accumulation_steps", type=int, default=1)
     parser.add_argument("--eval_batch_size", type=int, default=16)
@@ -141,6 +141,7 @@ def train(args):
         generation_max_length=225,
         save_steps=args.save_steps,
         eval_steps=args.eval_steps,
+        max_steps=args.max_steps,
         logging_steps=args.logging_steps,
         report_to=["tensorboard"],
         load_best_model_at_end=True,
