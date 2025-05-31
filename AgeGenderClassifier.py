@@ -114,33 +114,6 @@ def hf_collate_fn(batch):
     yg = torch.tensor(ys_gen) if ys_gen[0] is not None else None
     return batch_feats, batch_masks, ya, yg
 
-# ===== Metrics =====
-def custom_metrics(preds, labels, task):
-    results = {}
-    if task == 'age':
-        classnames = ['younger', 'older']
-    elif task == 'gender':
-        classnames = ['girl', 'boy']
-    else:
-        classnames = ['younger_girl', 'younger_boy', 'older_girl', 'older_boy']
-
-    key = 'joint' if task == 'both' else task
-    labels_arr = np.array(labels[key])
-    preds_arr  = np.array(preds[key])
-    avg = 'macro' if task == 'both' else 'binary'
-
-    results['acc_all'] = accuracy_score(labels_arr, preds_arr)
-    results['f1_all']  = f1_score(labels_arr, preds_arr, average=avg)
-    for i, name in enumerate(classnames):
-        idx = np.where(labels_arr == i)[0]
-        if len(idx) == 0:
-            results[f"acc_{name}"] = None
-            results[f"f1_{name}"]  = None
-        else:
-            results[f"acc_{name}"] = accuracy_score(labels_arr[idx], preds_arr[idx])
-            results[f"f1_{name}"]  = f1_score(labels_arr[idx], preds_arr[idx], average=avg)
-    return results['acc_all'], results
-
 # ===== Training & Evaluation Loops =====
 def train_loop(model, loader, optimizer, loss_fn_age, loss_fn_gender, loss_fn_group, device):
     model.train()
@@ -207,6 +180,54 @@ def eval_loop(model, loader, device):
 
     return preds, labels
 
+# ===== Main Training Functi# ===== Metrics =====
+def weighted_accuracy(preds, labels, class_weights):
+    weighted_acc = 0.0
+    total_weight = class_weights.sum()
+
+    for cls_idx, weight in enumerate(class_weights):
+        idx = np.where(labels == cls_idx)[0]
+        if len(idx) == 0:
+            acc = 0.0
+        else:
+            acc = accuracy_score(labels[idx], preds[idx])
+        weighted_acc += acc * (weight / total_weight)
+
+    return weighted_acc
+
+def custom_metrics(preds, labels, task, class_weights=None):
+    results = {}
+    if task == 'age':
+        classnames = ['younger', 'older']
+    elif task == 'gender':
+        classnames = ['girl', 'boy']
+    else:
+        classnames = ['younger_girl', 'younger_boy', 'older_girl', 'older_boy']
+
+    key = 'joint' if task == 'both' else task
+    labels_arr = np.array(labels[key])
+    preds_arr  = np.array(preds[key])
+    avg = 'macro' if task == 'both' else 'binary'
+
+    if class_weights is not None:
+        overall_acc = weighted_accuracy(preds_arr, labels_arr, class_weights)
+    else:
+        overall_acc = accuracy_score(labels_arr, preds_arr)
+
+    results['weighted_acc_all'] = overall_acc
+    results['f1_all'] = f1_score(labels_arr, preds_arr, average=avg)
+
+    for i, name in enumerate(classnames):
+        idx = np.where(labels_arr == i)[0]
+        if len(idx) == 0:
+            results[f"acc_{name}"] = None
+            results[f"f1_{name}"] = None
+        else:
+            results[f"acc_{name}"] = accuracy_score(labels_arr[idx], preds_arr[idx])
+            results[f"f1_{name}"] = f1_score(labels_arr[idx], preds_arr[idx], average=avg)
+
+    return overall_acc, results
+
 # ===== Main Training Function =====
 def train_age_gender_classifier(args):
     train_ds, dev_ds = combine_datasets(args.dataset_path)
@@ -215,31 +236,32 @@ def train_age_gender_classifier(args):
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-    # 1) Compute pos_weight for age/gender BCE losses
-    y_age    = train_ds['y_age'].detach().clone()
-    y_gender = train_ds['y_gender'].detach().clone()
-    age_pos_weight    = ((y_age == 0).sum()) / ((y_age == 1).sum())
+    # Compute pos_weight for BCE losses (unchanged)
+    y_age = torch.tensor(train_ds['y_age'])
+    y_gender = torch.tensor(train_ds['y_gender'])
+    age_pos_weight = ((y_age == 0).sum()) / ((y_age == 1).sum())
     gender_pos_weight = ((y_gender == 0).sum()) / ((y_gender == 1).sum())
-    age_pos_weight    = age_pos_weight.to(device)
+    age_pos_weight = age_pos_weight.to(device)
     gender_pos_weight = gender_pos_weight.to(device)
 
-    loss_fn_age    = nn.BCEWithLogitsLoss(pos_weight=age_pos_weight)
+    loss_fn_age = nn.BCEWithLogitsLoss(pos_weight=age_pos_weight)
     loss_fn_gender = nn.BCEWithLogitsLoss(pos_weight=gender_pos_weight)
 
-    # 2) Compute weighted CrossEntropyLoss for the 4 joint classes
-    #    joint_label = age*2 + gender  => 0..3
+    # Compute class weights for joint classes for loss and weighted accuracy
     group_labels_tensor = y_age * 2 + y_gender
     counts = Counter(group_labels_tensor.tolist())
-    total  = sum(counts.values())  # e.g. 4000 + 4500 + 6000 + 6600 = 21100
+    total = sum(counts.values())
 
-    # Create a weight vector of length 4:  weight[i] = total / counts[i]
-    class_weights = torch.tensor([total / counts[i] for i in range(4)], dtype=torch.float32).to(device)
-    loss_fn_group = nn.CrossEntropyLoss(weight=class_weights)
+    # For CrossEntropyLoss weights (inverse frequency)
+    class_weights_loss = torch.tensor([total / counts[i] for i in range(4)], dtype=torch.float32).to(device)
+    loss_fn_group = nn.CrossEntropyLoss(weight=class_weights_loss)
 
-    # 3) Build a WeightedRandomSampler so each joint class is seen equally often
+    # For weighted accuracy (normalized frequency)
+    class_weights_metric = torch.tensor([counts[i] / total for i in range(4)], dtype=torch.float32)
+
+    # WeightedRandomSampler setup (unchanged)
     num_classes = 4
-    sampler_class_weights = { cls: total / (num_classes * counts[cls]) for cls in range(4) }
-    # e.g. {0:21100/(4*4000), 1:21100/(4*4500), 2:21100/(4*6000), 3:21100/(4*6600)}
+    sampler_class_weights = {cls: total / (num_classes * counts[cls]) for cls in range(4)}
     sample_weights = [sampler_class_weights[int(lbl)] for lbl in group_labels_tensor.tolist()]
     sampler = WeightedRandomSampler(
         weights=sample_weights,
@@ -247,7 +269,6 @@ def train_age_gender_classifier(args):
         replacement=True
     )
 
-    # 4) Create DataLoaders: use sampler for train (instead of shuffle=True)
     train_loader = DataLoader(
         train_ds,
         batch_size=args.train_batch_size,
@@ -280,8 +301,8 @@ def train_age_gender_classifier(args):
         losses.append(loss)
 
         preds, labels = eval_loop(model, dev_loader, device)
-        overall_acc, results = custom_metrics(preds, labels, args.task)
-        print(f"Epoch {epoch}: loss={loss:.4f} | overall_acc={overall_acc:.4f}")
+        overall_acc, results = custom_metrics(preds, labels, args.task, class_weights_metric)
+        print(f"Epoch {epoch}: loss={loss:.4f} | weighted_acc={overall_acc:.4f}")
 
         if overall_acc > best_acc:
             best_acc = overall_acc
@@ -299,7 +320,6 @@ def train_age_gender_classifier(args):
     best_results["losses"] = losses
     with open(json_file, 'w') as jf:
         json.dump(best_results, jf, indent=2)
-
 # ===== CLI =====
 def main():
     parser = argparse.ArgumentParser()
