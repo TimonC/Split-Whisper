@@ -201,9 +201,9 @@ def train_age_gender_classifier(args):
         d.set_format(type='torch', columns=['input_features', 'y_age', 'y_gender'])
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
-    y_age = torch.tensor(train_ds['y_age'])
-    y_gender = torch.tensor(train_ds['y_gender'])
+    
+    y_age = train_ds['y_age'].detach().clone()
+    y_gender = train_ds['y_gender'].detach().clone()
 
     age_pos_weight = ((y_age == 0).sum()) / ((y_age == 1).sum())
     gender_pos_weight = ((y_gender == 0).sum()) / ((y_gender == 1).sum())
