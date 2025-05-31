@@ -13,7 +13,15 @@ from load_data_custom_cslu import load_data_custom_cslu
 from torch.amp import GradScaler, autocast
 from torch.utils.data import WeightedRandomSampler
 from collections import Counter
+import random
 
+def set_seed(seed):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
 # ===== Model =====
 class ResidualBlock(nn.Module):
     def __init__(self, in_c, out_c, stride=1):
@@ -234,12 +242,13 @@ def custom_metrics(preds, labels, task, class_weights=None):
     preds_arr  = np.array(preds[key])
     avg = 'macro' if task == 'both' else 'binary'
 
+    # Use weighted accuracy for *all* tasks if class_weights given, else regular accuracy
     if class_weights is not None:
         overall_acc = weighted_accuracy(preds_arr, labels_arr, class_weights)
     else:
         overall_acc = accuracy_score(labels_arr, preds_arr)
 
-    results['weighted_acc_all'] = overall_acc
+    results['weighted_acc_all'] = overall_acc  # Keep key for consistency
     results['f1_all'] = f1_score(labels_arr, preds_arr, average=avg)
 
     for i, name in enumerate(classnames):
@@ -253,6 +262,13 @@ def custom_metrics(preds, labels, task, class_weights=None):
 
     return overall_acc, results
 
+def compute_class_weights_from_counts(counts, num_classes):
+    total = sum(counts.values())
+    weights = torch.zeros(num_classes, dtype=torch.float32)
+    for i in range(num_classes):
+        weights[i] = counts.get(i, 0) / total
+    return weights
+
 # ===== Main Training Function =====
 def train_age_gender_classifier(args):
     train_ds, dev_ds = combine_datasets(args.dataset_path)
@@ -261,9 +277,10 @@ def train_age_gender_classifier(args):
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-    # Compute pos_weight for BCE losses (unchanged)
     y_age = train_ds['y_age'].clone()
     y_gender = train_ds['y_gender'].clone()
+
+    # Compute pos_weight for BCE losses
     age_pos_weight = ((y_age == 0).sum()) / ((y_age == 1).sum())
     gender_pos_weight = ((y_gender == 0).sum()) / ((y_gender == 1).sum())
     age_pos_weight = age_pos_weight.to(device)
@@ -272,21 +289,25 @@ def train_age_gender_classifier(args):
     loss_fn_age = nn.BCEWithLogitsLoss(pos_weight=age_pos_weight)
     loss_fn_gender = nn.BCEWithLogitsLoss(pos_weight=gender_pos_weight)
 
-    # Compute class weights for joint classes for loss and weighted accuracy
+    # Compute class counts
+    age_counts = Counter(y_age.tolist())
+    gender_counts = Counter(y_gender.tolist())
     group_labels_tensor = y_age * 2 + y_gender
-    counts = Counter(group_labels_tensor.tolist())
-    total = sum(counts.values())
+    group_counts = Counter(group_labels_tensor.tolist())
 
-    # For CrossEntropyLoss weights (inverse frequency)
-    class_weights_loss = torch.tensor([total / counts[i] for i in range(4)], dtype=torch.float32).to(device)
+    # Compute class weights for metrics (normalized frequencies)
+    age_weights_metric = compute_class_weights_from_counts(age_counts, 2)
+    gender_weights_metric = compute_class_weights_from_counts(gender_counts, 2)
+    group_weights_metric = compute_class_weights_from_counts(group_counts, 4)
+
+    # Compute class weights for loss (inverse frequency)
+    total_group = sum(group_counts.values())
+    class_weights_loss = torch.tensor([total_group / group_counts[i] for i in range(4)], dtype=torch.float32).to(device)
     loss_fn_group = nn.CrossEntropyLoss(weight=class_weights_loss)
 
-    # For weighted accuracy (normalized frequency)
-    class_weights_metric = torch.tensor([counts[i] / total for i in range(4)], dtype=torch.float32)
-
-    # WeightedRandomSampler setup (unchanged)
+    # Setup WeightedRandomSampler to balance batches on joint classes
     num_classes = 4
-    sampler_class_weights = {cls: total / (num_classes * counts[cls]) for cls in range(4)}
+    sampler_class_weights = {cls: total_group / (num_classes * group_counts[cls]) for cls in range(4)}
     sample_weights = [sampler_class_weights[int(lbl)] for lbl in group_labels_tensor.tolist()]
     sampler = WeightedRandomSampler(
         weights=sample_weights,
@@ -326,7 +347,17 @@ def train_age_gender_classifier(args):
         losses.append(loss)
 
         preds, labels = eval_loop(model, dev_loader, device)
+
+        # Select proper class weights for the current task
+        if args.task == 'age':
+            class_weights_metric = age_weights_metric
+        elif args.task == 'gender':
+            class_weights_metric = gender_weights_metric
+        else:
+            class_weights_metric = group_weights_metric
+
         overall_acc, results = custom_metrics(preds, labels, args.task, class_weights_metric)
+
         print(f"Epoch {epoch}: loss={loss:.4f} | weighted_acc={overall_acc:.4f}")
 
         if overall_acc > best_acc:
@@ -349,6 +380,7 @@ def train_age_gender_classifier(args):
             best_results[k] = v.item()
         elif isinstance(v, list) and any(isinstance(x, torch.Tensor) for x in v):
             best_results[k] = [x.item() if isinstance(x, torch.Tensor) else x for x in v]
+
     with open(json_file, 'w') as jf:
         json.dump(best_results, jf, indent=2)
 # ===== CLI =====
@@ -364,8 +396,12 @@ def main():
     parser.add_argument('--task', type=str, choices=['age','gender','both'], default='both')
     parser.add_argument('--patience', type=int, default=10, help='Early stopping patience')
     parser.add_argument('--save_model', action='store_true', default=False)
+    parser.add_argument('--seed', type=int, default=0)
+    
     args = parser.parse_args()
-    print(f"Training a model to classify cslu children's speech by {args.task}.")
+    set_seed(args.seed)
+
+    print(f"Training a model to classify cslu children's speech by {args.task}. Seed: {args.seed}")
     train_age_gender_classifier(args)
 
 if __name__ == '__main__':
