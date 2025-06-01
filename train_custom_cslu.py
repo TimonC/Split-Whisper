@@ -29,13 +29,13 @@ def get_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max_learning_rate", type=float, default=1e-5)
     parser.add_argument("--max_grad_norm", type=float, default=1)
     parser.add_argument("--warmup_steps", type=int, default=500)
-    parser.add_argument("--max_steps", type=int, default=4000)
+    parser.add_argument("--max_steps", type=int, default=2000)
     parser.add_argument("--eval_steps", type=int, default=500)
     parser.add_argument("--gradient_checkpointing", type=bool, default=True)
     parser.add_argument("--fp16", type=bool, default=True)
     parser.add_argument("--evaluation_strategy", type=str, default="steps")
     parser.add_argument("--logging_steps", type=int, default=100)
-    parser.add_argument("--save_steps", type=int, default=500)
+    parser.add_argument("--save_steps", type=int, default=2000)
     parser.add_argument("--patience", type=int, default=5)
     return parser
 
