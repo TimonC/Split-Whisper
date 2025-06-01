@@ -35,7 +35,7 @@ def get_parser() -> argparse.ArgumentParser:
     parser.add_argument("--fp16", type=bool, default=True)
     parser.add_argument("--evaluation_strategy", type=str, default="steps")
     parser.add_argument("--logging_steps", type=int, default=100)
-    parser.add_argument("--save_steps", type=int, default=2000)
+    parser.add_argument("--save_steps", type=int, default=None)
     parser.add_argument("--patience", type=int, default=5)
     return parser
 
@@ -135,7 +135,7 @@ def train(args):
         fp16=args.fp16,
         evaluation_strategy=args.evaluation_strategy,
         logging_strategy=args.evaluation_strategy,
-        save_strategy=args.evaluation_strategy,
+        # save_strategy=args.evaluation_strategy,
         per_device_eval_batch_size=args.eval_batch_size,
         predict_with_generate=True,
         generation_max_length=225,
@@ -163,6 +163,8 @@ def train(args):
     )
 
     trainer.train()
+    trainer.save_model()  # Saves the model
+    processor.save_pretrained(training_args.output_dir) 
 
 
 def compute_metrics(pred, tokenizer, metric, normalizer):
