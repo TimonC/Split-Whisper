@@ -230,37 +230,74 @@ def weighted_accuracy(preds, labels, class_weights):
 
 def custom_metrics(preds, labels, task, class_weights=None):
     results = {}
+
     if task == 'age':
+        # Same as before
         classnames = ['younger', 'older']
-    elif task == 'gender':
-        classnames = ['girl', 'boy']
-    else:
-        classnames = ['younger_girl', 'younger_boy', 'older_girl', 'older_boy']
-
-    key = 'joint' if task == 'both' else task
-    labels_arr = np.array(labels[key])
-    preds_arr  = np.array(preds[key])
-    avg = 'macro' if task == 'both' else 'binary'
-
-    # Use weighted accuracy for *all* tasks if class_weights given, else regular accuracy
-    if class_weights is not None:
-        overall_acc = weighted_accuracy(preds_arr, labels_arr, class_weights)
-    else:
-        overall_acc = accuracy_score(labels_arr, preds_arr)
-
-    results['weighted_acc_all'] = overall_acc  # Keep key for consistency
-    results['f1_all'] = f1_score(labels_arr, preds_arr, average=avg)
-
-    for i, name in enumerate(classnames):
-        idx = np.where(labels_arr == i)[0]
-        if len(idx) == 0:
-            results[f"acc_{name}"] = None
-            results[f"f1_{name}"] = None
+        labels_arr = np.array(labels['age'])
+        preds_arr  = np.array(preds['age'])
+        # regular accuracy or weighted (if class_weights is passed)
+        if class_weights is not None:
+            overall_acc = weighted_accuracy(preds_arr, labels_arr, class_weights)
         else:
-            results[f"acc_{name}"] = accuracy_score(labels_arr[idx], preds_arr[idx])
-            results[f"f1_{name}"] = f1_score(labels_arr[idx], preds_arr[idx], average=avg)
+            overall_acc = accuracy_score(labels_arr, preds_arr)
+        results['weighted_acc_all'] = overall_acc
+        results['f1_all'] = f1_score(labels_arr, preds_arr)
 
-    return overall_acc, results
+        for i, name in enumerate(classnames):
+            idx = np.where(labels_arr == i)[0]
+            results[f"acc_{name}"] = accuracy_score(labels_arr[idx], preds_arr[idx])
+            results[f"f1_{name}"] = f1_score(labels_arr[idx], preds_arr[idx])
+
+        return overall_acc, results
+
+    elif task == 'gender':
+        # Same as before
+        classnames = ['girl', 'boy']
+        labels_arr = np.array(labels['gender'])
+        preds_arr  = np.array(preds['gender'])
+        if class_weights is not None:
+            overall_acc = weighted_accuracy(preds_arr, labels_arr, class_weights)
+        else:
+            overall_acc = accuracy_score(labels_arr, preds_arr)
+        results['weighted_acc_all'] = overall_acc
+        results['f1_all'] = f1_score(labels_arr, preds_arr)
+
+        for i, name in enumerate(classnames):
+            idx = np.where(labels_arr == i)[0]
+            results[f"acc_{name}"] = accuracy_score(labels_arr[idx], preds_arr[idx])
+            results[f"f1_{name}"] = f1_score(labels_arr[idx], preds_arr[idx])
+
+        return overall_acc, results
+
+    else: 
+        joint_lbls = np.array(labels['joint'])
+        joint_preds = np.array(preds['joint'])
+
+        if class_weights is not None:
+            overall_acc = weighted_accuracy(joint_preds, joint_lbls, class_weights)
+        else:
+            overall_acc = accuracy_score(joint_lbls, joint_preds)
+        results['weighted_acc_all'] = overall_acc
+
+        # (Optional) joint F1 with macro average over the 4 classes
+        results['f1_all'] = f1_score(joint_lbls, joint_preds, average='macro')
+        gen_lbls = np.array(labels['gender'])
+        gen_preds = np.array(preds['gender'])
+        # Accuracy for girls (label=0) and boys (label=1)
+        for gender_val, gender_name in [(0, 'girl'), (1, 'boy')]:
+            idx = np.where(gen_lbls == gender_val)[0]
+            results[f"acc_{gender_name}"] = accuracy_score(gen_lbls[idx], gen_preds[idx])
+            results[f"f1_{gender_name}"] = f1_score(gen_lbls[idx], gen_preds[idx])
+
+        age_lbls = np.array(labels['age'])
+        age_preds = np.array(preds['age'])
+        for age_val, age_name in [(0, 'younger'), (1, 'older')]:
+            idx = np.where(age_lbls == age_val)[0]
+            results[f"acc_{age_name}"] = accuracy_score(age_lbls[idx], age_preds[idx])
+            results[f"f1_{age_name}"] = f1_score(age_lbls[idx], age_preds[idx])
+
+        return overall_acc, results
 
 def compute_class_weights_from_counts(counts, num_classes):
     total = sum(counts.values())
