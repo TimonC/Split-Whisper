@@ -51,10 +51,11 @@ def transcribe(args):
         device="cuda",
         chunk_length_s=30,
     )
-    if args.json_option=="all":
-        data_splits = ["all_ages_all_genders", "older_all_genders", "younger_all_genders"]
-    else:
-        data_splits = ["all_ages_all_genders", "all_ages_Girl", "all_ages_Boy", "older_Girl", "younger_Girl", "older_Boy", "younger_Boy"]
+    # if args.json_option=="all":
+    #     data_splits = ["all_ages_all_genders", "older_all_genders", "younger_all_genders"]
+    # else:
+    #     data_splits = ["all_ages_all_genders", "all_ages_Girl", "all_ages_Boy", "older_Girl", "younger_Girl", "older_Boy", "younger_Boy"]
+    data_splits = ["all_ages_all_genders", "younger_all_genders", "older_all_genders"]
     for cslu_option in args.cslu_options:
         # Load in test data
         data_path = os.path.join(args.data_path, args.json_option, "data", cslu_option)
