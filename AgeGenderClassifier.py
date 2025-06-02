@@ -117,7 +117,7 @@ def combine_datasets(dataset_path):
         y_age      = int(not is_younger)   # 1 = older, 0 = younger
         y_gender   = int(not is_girl)      # 1 = boy, 0 = girl
         for split, coll in [('train', all_train), ('development', all_dev)]:
-            tmp = ds[split].add_column('y_age',    [y_age]    * len(ds[split]))
+            tmp = ds[split].add_column('y_age',[y_age]* len(ds[split]))
             tmp = tmp.add_column('y_gender', [y_gender] * len(tmp))
             coll.append(tmp)
     train = concatenate_datasets(all_train)
@@ -385,7 +385,7 @@ def train_age_gender_classifier(args):
             if args.save_model:
                 os.makedirs(args.output_dir, exist_ok=True)
                 torch.save(model.state_dict(), os.path.join(args.output_dir, f"{args.task}.pt"))
-        else:
+        elif args.early_stopping:
             patience_counter += 1
             if patience_counter >= args.patience:
                 print("Early stopping triggered.")
@@ -410,6 +410,7 @@ def main():
     parser.add_argument('--patience',        type=int,   default=10, help='Early stopping patience')
     parser.add_argument('--save_model',      action='store_true', default=False)
     parser.add_argument('--seed',            type=int,   default=0)
+    parser.add_argument('--early_stopping', action='store_true', default=True)
     args = parser.parse_args()
 
     set_seed(args.seed)
