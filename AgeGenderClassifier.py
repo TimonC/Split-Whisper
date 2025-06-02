@@ -5,8 +5,8 @@ import torch.nn as nn
 import numpy as np
 import json
 from torch.utils.data import DataLoader
-from datasets import concatenate_datasets, Dataset
-from sklearn.metrics import accuracy_score, f1_score
+from datasets import concatenate_datasets
+from sklearn.metrics import accuracy_score
 from tqdm import tqdm, trange
 import torch.nn.functional as F
 from load_data_custom_cslu import load_data_custom_cslu
@@ -22,7 +22,8 @@ def set_seed(seed):
     torch.cuda.manual_seed_all(seed)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
-# ===== Model =====
+
+# ===== Model definition =====
 class ResidualBlock(nn.Module):
     def __init__(self, in_c, out_c, stride=1):
         super().__init__()
@@ -44,14 +45,11 @@ class ResidualBlock(nn.Module):
         out = self.conv1(x)
         out = self.bn1(out)
         out = self.relu(out)
-
         out = self.conv2(out)
         out = self.bn2(out)
-
         out += identity
         out = self.relu(out)
         return out
-
 
 class BinaryCNN(nn.Module):
     def __init__(self, task='both'):
@@ -76,7 +74,6 @@ class BinaryCNN(nn.Module):
         )
         self.age_head    = nn.Linear(32, 1)
         self.gender_head = nn.Linear(32, 1)
-        self.group_head  = nn.Linear(32, 4)
 
     def _make_layer(self, in_c, out_c, stride=1):
         return ResidualBlock(in_c, out_c, stride=stride)
@@ -102,17 +99,14 @@ class BinaryCNN(nn.Module):
             x = x * m
 
         x = self.shared_fc(x)
-
         outputs = {}
         if self.task in ('age', 'both'):
             outputs['age'] = self.age_head(x).squeeze(1)
         if self.task in ('gender', 'both'):
             outputs['gender'] = self.gender_head(x).squeeze(1)
-        if self.task == 'both':
-            outputs['group'] = self.group_head(x)
         return outputs
 
-# ===== Data Loading =====
+# ===== Data loading =====
 def combine_datasets(dataset_path):
     class_names = ['younger_Girl', 'younger_Boy', 'older_Girl', 'older_Boy']
     all_train, all_dev = [], []
@@ -130,7 +124,7 @@ def combine_datasets(dataset_path):
     dev   = concatenate_datasets(all_dev)
     return train, dev
 
-# ===== Collate =====
+# ===== Collate function =====
 def hf_collate_fn(batch):
     feats, ys_age, ys_gen, masks = [], [], [], []
     for itm in batch:
@@ -147,43 +141,64 @@ def hf_collate_fn(batch):
     yg = torch.tensor(ys_gen) if ys_gen[0] is not None else None
     return batch_feats, batch_masks, ya, yg
 
-# ===== Training & Evaluation Loops =====
-def train_loop(model, loader, optimizer, loss_fn_age, loss_fn_gender, loss_fn_group, device):
+# ===== Training loop with dynamic weighting =====
+def train_loop(model, loader, optimizer, loss_fn_age, loss_fn_gender, device):
     model.train()
     scaler = GradScaler()
     total_loss = 0.0
 
+    # Initialize running averages for dynamic weighting
+    running_age_loss    = 0.0
+    running_gender_loss = 0.0
+    beta = 0.99  # smoothing factor
+
     for feats, masks, ya, yg in tqdm(loader, desc='Train', leave=False):
         feats, masks = feats.to(device, non_blocking=True), masks.to(device, non_blocking=True)
         optimizer.zero_grad()
+
         with autocast(device.type):
             outputs = model(feats, mask=masks)
-            loss = 0.0
 
-            if model.task in ('age', 'both'):
-                ya = ya.to(device, non_blocking=True).float()
-                loss += loss_fn_age(outputs['age'], ya)
-            if model.task in ('gender', 'both'):
-                yg = yg.to(device, non_blocking=True).float()
-                loss += loss_fn_gender(outputs['gender'], yg)
-            if model.task == 'both':
-                group_labels = (ya.long() * 2 + yg.long()).to(device)  # 0..3
-                loss += loss_fn_group(outputs['group'], group_labels)
+            # Age sub-loss
+            ya_device  = ya.to(device, non_blocking=True).float()
+            logits_age = outputs['age']
+            loss_age   = loss_fn_age(logits_age, ya_device)
+
+            # Gender sub-loss
+            yg_device     = yg.to(device, non_blocking=True).float()
+            logits_gender = outputs['gender']
+            loss_gender   = loss_fn_gender(logits_gender, yg_device)
+
+            # Update running averages (detach to avoid backprop)
+            running_age_loss    = beta * running_age_loss    + (1 - beta) * loss_age.detach().item()
+            running_gender_loss = beta * running_gender_loss + (1 - beta) * loss_gender.detach().item()
+
+            # Dynamic weights so that larger-magnitude loss gets smaller weight
+            denom = running_age_loss + running_gender_loss
+            if denom > 0.0:
+                w_age    = running_gender_loss / denom
+                w_gender = running_age_loss    / denom
+            else:
+                w_age, w_gender = 0.5, 0.5
+
+            # Combine losses
+            loss = w_age * loss_age + w_gender * loss_gender
 
         scaler.scale(loss).backward()
         scaler.unscale_(optimizer)
         nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         scaler.step(optimizer)
         scaler.update()
+
         total_loss += loss.item() * feats.size(0)
 
     return total_loss / len(loader.dataset)
 
-
+# ===== Evaluation loop =====
 @torch.no_grad()
 def eval_loop(model, loader, device):
     model.eval()
-    preds, labels = {k: [] for k in ['age','gender','joint']}, {k: [] for k in ['age','gender','joint']}
+    preds, labels = {k: [] for k in ['age','gender']}, {k: [] for k in ['age','gender']}
 
     for feats, masks, ya, yg in tqdm(loader, desc='Eval', leave=False):
         feats, masks = feats.to(device), masks.to(device)
@@ -199,13 +214,6 @@ def eval_loop(model, loader, device):
             preds['gender'].append((pg > 0.5).cpu().numpy())
             labels['gender'].append(yg.numpy())
 
-        if model.task == 'both':
-            group_logits = outputs['group']
-            jp = group_logits.argmax(dim=1).cpu().numpy()
-            jl = (ya * 2 + yg).numpy()
-            preds['joint'].append(jp)
-            labels['joint'].append(jl)
-
     for k in preds:
         if preds[k]:
             preds[k]  = np.concatenate(preds[k])
@@ -213,11 +221,10 @@ def eval_loop(model, loader, device):
 
     return preds, labels
 
-# ===== Main Training Functi# ===== Metrics =====
+# ===== Metrics =====
 def weighted_accuracy(preds, labels, class_weights):
     weighted_acc = 0.0
     total_weight = class_weights.sum()
-
     for cls_idx, weight in enumerate(class_weights):
         idx = np.where(labels == cls_idx)[0]
         if len(idx) == 0:
@@ -225,78 +232,59 @@ def weighted_accuracy(preds, labels, class_weights):
         else:
             acc = accuracy_score(labels[idx], preds[idx])
         weighted_acc += acc * (weight / total_weight)
-
     return weighted_acc
 
 def custom_metrics(preds, labels, task, class_weights=None):
     results = {}
 
     if task == 'age':
-        # Same as before
-        classnames = ['younger', 'older']
-        labels_arr = np.array(labels['age'])
-        preds_arr  = np.array(preds['age'])
-        # regular accuracy or weighted (if class_weights is passed)
+        arr_labels = np.array(labels['age'])
+        arr_preds  = np.array(preds['age'])
         if class_weights is not None:
-            overall_acc = weighted_accuracy(preds_arr, labels_arr, class_weights)
+            overall_acc = weighted_accuracy(arr_preds, arr_labels, class_weights)
         else:
-            overall_acc = accuracy_score(labels_arr, preds_arr)
+            overall_acc = accuracy_score(arr_labels, arr_preds)
         results['weighted_acc_all'] = overall_acc
-        results['f1_all'] = f1_score(labels_arr, preds_arr)
-
-        for i, name in enumerate(classnames):
-            idx = np.where(labels_arr == i)[0]
-            results[f"acc_{name}"] = accuracy_score(labels_arr[idx], preds_arr[idx])
-            results[f"f1_{name}"] = f1_score(labels_arr[idx], preds_arr[idx])
-
+        # Per-class accuracy
+        for age_val, age_name in [(0, 'younger'), (1, 'older')]:
+            idx = np.where(arr_labels == age_val)[0]
+            results[f"acc_{age_name}"] = accuracy_score(arr_labels[idx], arr_preds[idx])
         return overall_acc, results
 
     elif task == 'gender':
-        # Same as before
-        classnames = ['girl', 'boy']
-        labels_arr = np.array(labels['gender'])
-        preds_arr  = np.array(preds['gender'])
+        arr_labels = np.array(labels['gender'])
+        arr_preds  = np.array(preds['gender'])
         if class_weights is not None:
-            overall_acc = weighted_accuracy(preds_arr, labels_arr, class_weights)
+            overall_acc = weighted_accuracy(arr_preds, arr_labels, class_weights)
         else:
-            overall_acc = accuracy_score(labels_arr, preds_arr)
+            overall_acc = accuracy_score(arr_labels, arr_preds)
         results['weighted_acc_all'] = overall_acc
-        results['f1_all'] = f1_score(labels_arr, preds_arr)
-
-        for i, name in enumerate(classnames):
-            idx = np.where(labels_arr == i)[0]
-            results[f"acc_{name}"] = accuracy_score(labels_arr[idx], preds_arr[idx])
-            results[f"f1_{name}"] = f1_score(labels_arr[idx], preds_arr[idx])
-
+        # Per-class accuracy
+        for gen_val, gen_name in [(0, 'girl'), (1, 'boy')]:
+            idx = np.where(arr_labels == gen_val)[0]
+            results[f"acc_{gen_name}"] = accuracy_score(arr_labels[idx], arr_preds[idx])
         return overall_acc, results
 
-    else: 
-        joint_lbls = np.array(labels['joint'])
-        joint_preds = np.array(preds['joint'])
-
+    else:  # task == 'both'
+        # age weighted-acc
+        age_arr  = np.array(labels['age'])
+        age_pred = np.array(preds['age'])
         if class_weights is not None:
-            overall_acc = weighted_accuracy(joint_preds, joint_lbls, class_weights)
+            acc_age = weighted_accuracy(age_pred, age_arr, class_weights[0])
         else:
-            overall_acc = accuracy_score(joint_lbls, joint_preds)
-        results['weighted_acc_all'] = overall_acc
+            acc_age = accuracy_score(age_arr, age_pred)
+        results['weighted_acc_age'] = acc_age
 
-        # (Optional) joint F1 with macro average over the 4 classes
-        results['f1_all'] = f1_score(joint_lbls, joint_preds, average='macro')
-        gen_lbls = np.array(labels['gender'])
-        gen_preds = np.array(preds['gender'])
-        # Accuracy for girls (label=0) and boys (label=1)
-        for gender_val, gender_name in [(0, 'girl'), (1, 'boy')]:
-            idx = np.where(gen_lbls == gender_val)[0]
-            results[f"acc_{gender_name}"] = accuracy_score(gen_lbls[idx], gen_preds[idx])
-            results[f"f1_{gender_name}"] = f1_score(gen_lbls[idx], gen_preds[idx])
+        # gender weighted-acc
+        gen_arr  = np.array(labels['gender'])
+        gen_pred = np.array(preds['gender'])
+        if class_weights is not None:
+            acc_gen = weighted_accuracy(gen_pred, gen_arr, class_weights[1])
+        else:
+            acc_gen = accuracy_score(gen_arr, gen_pred)
+        results['weighted_acc_gender'] = acc_gen
 
-        age_lbls = np.array(labels['age'])
-        age_preds = np.array(preds['age'])
-        for age_val, age_name in [(0, 'younger'), (1, 'older')]:
-            idx = np.where(age_lbls == age_val)[0]
-            results[f"acc_{age_name}"] = accuracy_score(age_lbls[idx], age_preds[idx])
-            results[f"f1_{age_name}"] = f1_score(age_lbls[idx], age_preds[idx])
-
+        overall_acc = (acc_age + acc_gen) / 2.0
         return overall_acc, results
 
 def compute_class_weights_from_counts(counts, num_classes):
@@ -306,7 +294,7 @@ def compute_class_weights_from_counts(counts, num_classes):
         weights[i] = counts.get(i, 0) / total
     return weights
 
-# ===== Main Training Function =====
+# ===== Main training function =====
 def train_age_gender_classifier(args):
     train_ds, dev_ds = combine_datasets(args.dataset_path)
     for d in (train_ds, dev_ds):
@@ -318,34 +306,26 @@ def train_age_gender_classifier(args):
     y_gender = train_ds['y_gender'].clone()
 
     # Compute pos_weight for BCE losses
-    age_pos_weight = ((y_age == 0).sum()) / ((y_age == 1).sum())
+    age_pos_weight   = ((y_age == 0).sum()) / ((y_age == 1).sum())
     gender_pos_weight = ((y_gender == 0).sum()) / ((y_gender == 1).sum())
-    age_pos_weight = age_pos_weight.to(device)
+    age_pos_weight   = age_pos_weight.to(device)
     gender_pos_weight = gender_pos_weight.to(device)
 
-    loss_fn_age = nn.BCEWithLogitsLoss(pos_weight=age_pos_weight)
+    loss_fn_age    = nn.BCEWithLogitsLoss(pos_weight=age_pos_weight)
     loss_fn_gender = nn.BCEWithLogitsLoss(pos_weight=gender_pos_weight)
 
-    # Compute class counts
-    age_counts = Counter(y_age.tolist())
+    # Compute class counts and weights for metrics
+    age_counts   = Counter(y_age.tolist())
     gender_counts = Counter(y_gender.tolist())
-    group_labels_tensor = y_age * 2 + y_gender
-    group_counts = Counter(group_labels_tensor.tolist())
-
-    # Compute class weights for metrics (normalized frequencies)
-    age_weights_metric = compute_class_weights_from_counts(age_counts, 2)
+    age_weights_metric   = compute_class_weights_from_counts(age_counts, 2)
     gender_weights_metric = compute_class_weights_from_counts(gender_counts, 2)
-    group_weights_metric = compute_class_weights_from_counts(group_counts, 4)
 
-    # Compute class weights for loss (inverse frequency)
+    # Prepare a sampler to balance on joint classes if using task='both'
+    group_labels = y_age * 2 + y_gender
+    group_counts = Counter(group_labels.tolist())
     total_group = sum(group_counts.values())
-    class_weights_loss = torch.tensor([total_group / group_counts[i] for i in range(4)], dtype=torch.float32).to(device)
-    loss_fn_group = nn.CrossEntropyLoss(weight=class_weights_loss)
-
-    # Setup WeightedRandomSampler to balance batches on joint classes
-    num_classes = 4
-    sampler_class_weights = {cls: total_group / (num_classes * group_counts[cls]) for cls in range(4)}
-    sample_weights = [sampler_class_weights[int(lbl)] for lbl in group_labels_tensor.tolist()]
+    sampler_class_weights = {cls: total_group / (4 * group_counts[cls]) for cls in range(4)}
+    sample_weights = [sampler_class_weights[int(lbl)] for lbl in group_labels.tolist()]
     sampler = WeightedRandomSampler(
         weights=sample_weights,
         num_samples=len(sample_weights),
@@ -376,31 +356,32 @@ def train_age_gender_classifier(args):
     json_file = os.path.join(args.results_dir, f"{args.task}.json")
 
     best_acc, patience_counter = 0.0, 0
-    losses, best_results = [], {}
+    best_results = {}
+    losses = []
 
     for epoch in trange(args.num_train_epochs, desc='Epochs'):
-        loss = train_loop(model, train_loader, optimizer,
-                          loss_fn_age, loss_fn_gender, loss_fn_group, device)
+        loss = train_loop(model, train_loader, optimizer, loss_fn_age, loss_fn_gender, device)
         losses.append(loss)
 
         preds, labels = eval_loop(model, dev_loader, device)
 
-        # Select proper class weights for the current task
+        # Choose class weights depending on the task
         if args.task == 'age':
-            class_weights_metric = age_weights_metric
+            cw = age_weights_metric
         elif args.task == 'gender':
-            class_weights_metric = gender_weights_metric
-        else:
-            class_weights_metric = group_weights_metric
+            cw = gender_weights_metric
+        else:  # both
+            cw = (age_weights_metric, gender_weights_metric)
 
-        overall_acc, results = custom_metrics(preds, labels, args.task, class_weights_metric)
+        overall_acc, results = custom_metrics(preds, labels, args.task, cw)
 
         print(f"Epoch {epoch}: loss={loss:.4f} | weighted_acc={overall_acc:.4f}")
 
         if overall_acc > best_acc:
             best_acc = overall_acc
             patience_counter = 0
-            best_results = results
+            best_results = results.copy()
+            best_results["losses"] = losses.copy()
             if args.save_model:
                 os.makedirs(args.output_dir, exist_ok=True)
                 torch.save(model.state_dict(), os.path.join(args.output_dir, f"{args.task}.pt"))
@@ -410,34 +391,28 @@ def train_age_gender_classifier(args):
                 print("Early stopping triggered.")
                 break
 
-    best_results["losses"] = losses
-
-    for k, v in best_results.items():
-        if isinstance(v, torch.Tensor):
-            best_results[k] = v.item()
-        elif isinstance(v, list) and any(isinstance(x, torch.Tensor) for x in v):
-            best_results[k] = [x.item() if isinstance(x, torch.Tensor) else x for x in v]
-
     with open(json_file, 'w') as jf:
         json.dump(best_results, jf, indent=2)
+
+    return best_results
+
 # ===== CLI =====
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--dataset_path', type=str, default='data_cslu_splits/gender/data/scripted')
-    parser.add_argument('--output_dir',    type=str, default='AgeGenderModels')
-    parser.add_argument('--results_dir',   type=str, default='results/classifier')
-    parser.add_argument('--train_batch_size', type=int, default=16)
-    parser.add_argument('--eval_batch_size',  type=int, default=32)
-    parser.add_argument('--num_train_epochs', type=int, default=50)
-    parser.add_argument('--learning_rate',    type=float, default=1e-4)
-    parser.add_argument('--task', type=str, choices=['age','gender','both'], default='both')
-    parser.add_argument('--patience', type=int, default=10, help='Early stopping patience')
-    parser.add_argument('--save_model', action='store_true', default=False)
-    parser.add_argument('--seed', type=int, default=0)
-    
+    parser.add_argument('--dataset_path',    type=str,   default='data_cslu_splits/gender/data/scripted')
+    parser.add_argument('--output_dir',      type=str,   default='AgeGenderModels')
+    parser.add_argument('--results_dir',     type=str,   default='results/classifier')
+    parser.add_argument('--train_batch_size',type=int,   default=16)
+    parser.add_argument('--eval_batch_size', type=int,   default=32)
+    parser.add_argument('--num_train_epochs',type=int,   default=50)
+    parser.add_argument('--learning_rate',   type=float, default=1e-4)
+    parser.add_argument('--task',            type=str,   choices=['age','gender','both'], default='both')
+    parser.add_argument('--patience',        type=int,   default=10, help='Early stopping patience')
+    parser.add_argument('--save_model',      action='store_true', default=False)
+    parser.add_argument('--seed',            type=int,   default=0)
     args = parser.parse_args()
-    set_seed(args.seed)
 
+    set_seed(args.seed)
     print(f"Training a model to classify cslu children's speech by {args.task}. Seed: {args.seed}")
     train_age_gender_classifier(args)
 
