@@ -142,15 +142,16 @@ def hf_collate_fn(batch):
     return batch_feats, batch_masks, ya, yg
 
 # ===== Training loop with dynamic weighting =====
-def train_loop(model, loader, optimizer, loss_fn_age, loss_fn_gender, device):
+def train_loop(model, loader, optimizer, loss_fn_age, loss_fn_gender, device, task='both'):
     model.train()
     scaler = GradScaler()
     total_loss = 0.0
 
-    # Initialize running averages for dynamic weighting
-    running_age_loss    = 0.0
-    running_gender_loss = 0.0
-    beta = 0.99  # smoothing factor
+    # Only initialize if task == 'both'
+    if task == 'both':
+        running_age_loss = 0.0
+        running_gender_loss = 0.0
+        beta = 0.99  # smoothing factor
 
     for feats, masks, ya, yg in tqdm(loader, desc='Train', leave=False):
         feats, masks = feats.to(device, non_blocking=True), masks.to(device, non_blocking=True)
@@ -159,30 +160,40 @@ def train_loop(model, loader, optimizer, loss_fn_age, loss_fn_gender, device):
         with autocast(device.type):
             outputs = model(feats, mask=masks)
 
-            # Age sub-loss
-            ya_device  = ya.to(device, non_blocking=True).float()
-            logits_age = outputs['age']
-            loss_age   = loss_fn_age(logits_age, ya_device)
+            if task == 'age':
+                ya_device = ya.to(device, non_blocking=True).float()
+                logits_age = outputs['age']
+                loss = loss_fn_age(logits_age, ya_device)
 
-            # Gender sub-loss
-            yg_device     = yg.to(device, non_blocking=True).float()
-            logits_gender = outputs['gender']
-            loss_gender   = loss_fn_gender(logits_gender, yg_device)
+            elif task == 'gender':
+                yg_device = yg.to(device, non_blocking=True).float()
+                logits_gender = outputs['gender']
+                loss = loss_fn_gender(logits_gender, yg_device)
 
-            # Update running averages (detach to avoid backprop)
-            running_age_loss    = beta * running_age_loss    + (1 - beta) * loss_age.detach().item()
-            running_gender_loss = beta * running_gender_loss + (1 - beta) * loss_gender.detach().item()
+            elif task == 'both':
+                # Compute both losses
+                ya_device = ya.to(device, non_blocking=True).float()
+                logits_age = outputs['age']
+                loss_age = loss_fn_age(logits_age, ya_device)
 
-            # Dynamic weights so that larger-magnitude loss gets smaller weight
-            denom = running_age_loss + running_gender_loss
-            if denom > 0.0:
-                w_age    = running_gender_loss / denom
-                w_gender = running_age_loss    / denom
-            else:
-                w_age, w_gender = 0.5, 0.5
+                yg_device = yg.to(device, non_blocking=True).float()
+                logits_gender = outputs['gender']
+                loss_gender = loss_fn_gender(logits_gender, yg_device)
 
-            # Combine losses
-            loss = w_age * loss_age + w_gender * loss_gender
+                # Update running averages
+                running_age_loss = beta * running_age_loss + (1 - beta) * loss_age.detach().item()
+                running_gender_loss = beta * running_gender_loss + (1 - beta) * loss_gender.detach().item()
+
+                # Dynamic weighting
+                denom = running_age_loss + running_gender_loss
+                if denom > 0.0:
+                    w_age = running_gender_loss / denom
+                    w_gender = running_age_loss / denom
+                else:
+                    w_age, w_gender = 0.5, 0.5
+
+                # Combine
+                loss = w_age * loss_age + w_gender * loss_gender
 
         scaler.scale(loss).backward()
         scaler.unscale_(optimizer)
@@ -360,7 +371,7 @@ def train_age_gender_classifier(args):
     losses = []
 
     for epoch in trange(args.num_train_epochs, desc='Epochs'):
-        loss = train_loop(model, train_loader, optimizer, loss_fn_age, loss_fn_gender, device)
+        loss = train_loop(model, train_loader, optimizer, loss_fn_age, loss_fn_gender, device, task=args.task)
         losses.append(loss)
 
         preds, labels = eval_loop(model, dev_loader, device)
