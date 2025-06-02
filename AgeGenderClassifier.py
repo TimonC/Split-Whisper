@@ -398,41 +398,51 @@ def train_age_gender_classifier(args):
 # ===== Main training with multiple runs =====
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--dataset_path',    type=str,   default='data_cslu_splits/gender/data/scripted')
-    parser.add_argument('--output_dir',      type=str,   default='AgeGenderModels')
-    parser.add_argument('--results_dir',     type=str,   default='results/classifier')
-    parser.add_argument('--train_batch_size',type=int,   default=16)
-    parser.add_argument('--eval_batch_size', type=int,   default=32)
-    parser.add_argument('--num_train_epochs',type=int,   default=50)
-    parser.add_argument('--learning_rate',   type=float, default=1e-4)
-    parser.add_argument('--task',            type=str,   choices=['age','gender','both'], default='both')
-    parser.add_argument('--patience',        type=int,   default=10, help='Early stopping patience')
-    parser.add_argument('--save_model',      action='store_true')
-    parser.add_argument('--seed',            type=int,   default=0)
-    parser.add_argument('--early_stopping', action='store_true')
-    parser.add_argument('--num_runs',        type=int,   default=2, help='Number of runs to average over')
+    parser.add_argument('--dataset_path',     type=str,   default='data_cslu_splits/gender/data/scripted')
+    parser.add_argument('--output_dir',       type=str,   default='AgeGenderModels')
+    parser.add_argument('--results_dir',      type=str,   default='results/classifier')
+    parser.add_argument('--train_batch_size', type=int,   default=16)
+    parser.add_argument('--eval_batch_size',  type=int,   default=32)
+    parser.add_argument('--num_train_epochs', type=int,   default=50)
+    parser.add_argument('--learning_rate',    type=float, default=1e-4)
+    parser.add_argument('--task',             type=str,   choices=['age','gender','both'], default='both')
+    parser.add_argument('--patience',         type=int,   default=10, help='Early stopping patience')
+    parser.add_argument('--save_model',       action='store_true')
+    parser.add_argument('--seed',             type=int,   default=0)
+    parser.add_argument('--early_stopping',   action='store_true')
+    parser.add_argument('--num_runs',         type=int,   default=2, help='Number of runs to average over')
     args = parser.parse_args()
 
     all_run_results = []
+    single_run_losses = None
+
     for run_idx in range(args.num_runs):
         run_seed = args.seed + run_idx
         set_seed(run_seed)
         print(f"\n=== Run {run_idx + 1}/{args.num_runs}, Seed: {run_seed} ===")
         run_results = train_age_gender_classifier(args)
+
+        # Save the first run’s per-epoch losses for plotting
+        if run_idx == 0 and 'losses' in run_results:
+            single_run_losses = run_results['losses']
+
         all_run_results.append(run_results)
 
-    # Aggregate metrics across runs
-    # Collect all metric keys
+    # Aggregate metrics across runs (excluding 'losses')
     metric_keys = set()
     for res in all_run_results:
         metric_keys.update(res.keys())
-    metric_keys.discard('losses')  # losses is a list, skip aggregation
+    metric_keys.discard('losses')
 
     aggregated = {}
     for key in metric_keys:
         vals = [res[key] for res in all_run_results if key in res]
         aggregated[key + '_mean'] = float(np.mean(vals))
-        aggregated[key + '_std'] = float(np.std(vals))
+        aggregated[key + '_std']  = float(np.std(vals))
+
+    # Include the first run’s losses separately
+    if single_run_losses is not None:
+        aggregated['losses_first_run'] = single_run_losses
 
     # Save aggregated results
     agg_file = os.path.join(args.results_dir, f"{args.task}_aggregated_{args.num_runs}runs.json")
