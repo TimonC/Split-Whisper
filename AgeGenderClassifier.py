@@ -147,7 +147,6 @@ def train_loop(model, loader, optimizer, loss_fn_age, loss_fn_gender, device, ta
     scaler = GradScaler()
     total_loss = 0.0
 
-    # Only initialize if task == 'both'
     if task == 'both':
         running_age_loss = 0.0
         running_gender_loss = 0.0
@@ -171,7 +170,6 @@ def train_loop(model, loader, optimizer, loss_fn_age, loss_fn_gender, device, ta
                 loss = loss_fn_gender(logits_gender, yg_device)
 
             elif task == 'both':
-                # Compute both losses
                 ya_device = ya.to(device, non_blocking=True).float()
                 logits_age = outputs['age']
                 loss_age = loss_fn_age(logits_age, ya_device)
@@ -180,11 +178,9 @@ def train_loop(model, loader, optimizer, loss_fn_age, loss_fn_gender, device, ta
                 logits_gender = outputs['gender']
                 loss_gender = loss_fn_gender(logits_gender, yg_device)
 
-                # Update running averages
                 running_age_loss = beta * running_age_loss + (1 - beta) * loss_age.detach().item()
                 running_gender_loss = beta * running_gender_loss + (1 - beta) * loss_gender.detach().item()
 
-                # Dynamic weighting
                 denom = running_age_loss + running_gender_loss
                 if denom > 0.0:
                     w_age = running_gender_loss / denom
@@ -192,7 +188,6 @@ def train_loop(model, loader, optimizer, loss_fn_age, loss_fn_gender, device, ta
                 else:
                     w_age, w_gender = 0.5, 0.5
 
-                # Combine
                 loss = w_age * loss_age + w_gender * loss_gender
 
         scaler.scale(loss).backward()
@@ -256,7 +251,6 @@ def custom_metrics(preds, labels, task, class_weights=None):
         else:
             overall_acc = accuracy_score(arr_labels, arr_preds)
         results['weighted_acc_all'] = overall_acc
-        # Per-class accuracy
         for age_val, age_name in [(0, 'younger'), (1, 'older')]:
             idx = np.where(arr_labels == age_val)[0]
             results[f"acc_{age_name}"] = accuracy_score(arr_labels[idx], arr_preds[idx])
@@ -270,14 +264,12 @@ def custom_metrics(preds, labels, task, class_weights=None):
         else:
             overall_acc = accuracy_score(arr_labels, arr_preds)
         results['weighted_acc_all'] = overall_acc
-        # Per-class accuracy
         for gen_val, gen_name in [(0, 'girl'), (1, 'boy')]:
             idx = np.where(arr_labels == gen_val)[0]
             results[f"acc_{gen_name}"] = accuracy_score(arr_labels[idx], arr_preds[idx])
         return overall_acc, results
 
     else:  # task == 'both'
-        # age weighted-acc
         age_arr  = np.array(labels['age'])
         age_pred = np.array(preds['age'])
         if class_weights is not None:
@@ -286,7 +278,6 @@ def custom_metrics(preds, labels, task, class_weights=None):
             acc_age = accuracy_score(age_arr, age_pred)
         results['weighted_acc_age'] = acc_age
 
-        # gender weighted-acc
         gen_arr  = np.array(labels['gender'])
         gen_pred = np.array(preds['gender'])
         if class_weights is not None:
@@ -298,6 +289,7 @@ def custom_metrics(preds, labels, task, class_weights=None):
         overall_acc = (acc_age + acc_gen) / 2.0
         return overall_acc, results
 
+
 def compute_class_weights_from_counts(counts, num_classes):
     total = sum(counts.values())
     weights = torch.zeros(num_classes, dtype=torch.float32)
@@ -305,7 +297,7 @@ def compute_class_weights_from_counts(counts, num_classes):
         weights[i] = counts.get(i, 0) / total
     return weights
 
-# ===== Main training function =====
+# ===== Single-run training function =====
 def train_age_gender_classifier(args):
     train_ds, dev_ds = combine_datasets(args.dataset_path)
     for d in (train_ds, dev_ds):
@@ -316,7 +308,6 @@ def train_age_gender_classifier(args):
     y_age = train_ds['y_age'].clone()
     y_gender = train_ds['y_gender'].clone()
 
-    # Compute pos_weight for BCE losses
     age_pos_weight   = ((y_age == 0).sum()) / ((y_age == 1).sum())
     gender_pos_weight = ((y_gender == 0).sum()) / ((y_gender == 1).sum())
     age_pos_weight   = age_pos_weight.to(device)
@@ -325,13 +316,11 @@ def train_age_gender_classifier(args):
     loss_fn_age    = nn.BCEWithLogitsLoss(pos_weight=age_pos_weight)
     loss_fn_gender = nn.BCEWithLogitsLoss(pos_weight=gender_pos_weight)
 
-    # Compute class counts and weights for metrics
     age_counts   = Counter(y_age.tolist())
     gender_counts = Counter(y_gender.tolist())
     age_weights_metric   = compute_class_weights_from_counts(age_counts, 2)
     gender_weights_metric = compute_class_weights_from_counts(gender_counts, 2)
 
-    # Prepare a sampler to balance on joint classes if using task='both'
     group_labels = y_age * 2 + y_gender
     group_counts = Counter(group_labels.tolist())
     total_group = sum(group_counts.values())
@@ -376,12 +365,11 @@ def train_age_gender_classifier(args):
 
         preds, labels = eval_loop(model, dev_loader, device)
 
-        # Choose class weights depending on the task
         if args.task == 'age':
             cw = age_weights_metric
         elif args.task == 'gender':
             cw = gender_weights_metric
-        else:  # both
+        else:
             cw = (age_weights_metric, gender_weights_metric)
 
         overall_acc, results = custom_metrics(preds, labels, args.task, cw)
@@ -407,7 +395,7 @@ def train_age_gender_classifier(args):
 
     return best_results
 
-# ===== CLI =====
+# ===== Main training with multiple runs =====
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--dataset_path',    type=str,   default='data_cslu_splits/gender/data/scripted')
@@ -419,14 +407,41 @@ def main():
     parser.add_argument('--learning_rate',   type=float, default=1e-4)
     parser.add_argument('--task',            type=str,   choices=['age','gender','both'], default='both')
     parser.add_argument('--patience',        type=int,   default=10, help='Early stopping patience')
-    parser.add_argument('--save_model',      action='store_true', default=False)
+    parser.add_argument('--save_model',      action='store_true')
     parser.add_argument('--seed',            type=int,   default=0)
-    parser.add_argument('--early_stopping', action='store_true', default=True)
+    parser.add_argument('--early_stopping', action='store_true')
+    parser.add_argument('--num_runs',        type=int,   default=2, help='Number of runs to average over')
     args = parser.parse_args()
 
-    set_seed(args.seed)
-    print(f"Training a model to classify cslu children's speech by {args.task}. Seed: {args.seed}")
-    train_age_gender_classifier(args)
+    all_run_results = []
+    for run_idx in range(args.num_runs):
+        run_seed = args.seed + run_idx
+        set_seed(run_seed)
+        print(f"\n=== Run {run_idx + 1}/{args.num_runs}, Seed: {run_seed} ===")
+        run_results = train_age_gender_classifier(args)
+        all_run_results.append(run_results)
+
+    # Aggregate metrics across runs
+    # Collect all metric keys
+    metric_keys = set()
+    for res in all_run_results:
+        metric_keys.update(res.keys())
+    metric_keys.discard('losses')  # losses is a list, skip aggregation
+
+    aggregated = {}
+    for key in metric_keys:
+        vals = [res[key] for res in all_run_results if key in res]
+        aggregated[key + '_mean'] = float(np.mean(vals))
+        aggregated[key + '_std'] = float(np.std(vals))
+
+    # Save aggregated results
+    agg_file = os.path.join(args.results_dir, f"{args.task}_aggregated_{args.num_runs}runs.json")
+    os.makedirs(args.results_dir, exist_ok=True)
+    with open(agg_file, 'w') as af:
+        json.dump(aggregated, af, indent=2)
+
+    print(f"\nAggregated results saved to {agg_file}")
+    print(json.dumps(aggregated, indent=2))
 
 if __name__ == '__main__':
     main()
