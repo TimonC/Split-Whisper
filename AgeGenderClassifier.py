@@ -250,10 +250,11 @@ def custom_metrics(preds, labels, task, class_weights=None):
             overall_acc = weighted_accuracy(arr_preds, arr_labels, class_weights)
         else:
             overall_acc = accuracy_score(arr_labels, arr_preds)
-        results['weighted_acc_all'] = overall_acc
+        results['weighted_acc_all'] = float(overall_acc)
+
         for age_val, age_name in [(0, 'younger'), (1, 'older')]:
             idx = np.where(arr_labels == age_val)[0]
-            results[f"acc_{age_name}"] = accuracy_score(arr_labels[idx], arr_preds[idx])
+            results[f"acc_{age_name}"] = float(accuracy_score(arr_labels[idx], arr_preds[idx]))
         return overall_acc, results
 
     elif task == 'gender':
@@ -263,10 +264,11 @@ def custom_metrics(preds, labels, task, class_weights=None):
             overall_acc = weighted_accuracy(arr_preds, arr_labels, class_weights)
         else:
             overall_acc = accuracy_score(arr_labels, arr_preds)
-        results['weighted_acc_all'] = overall_acc
+        results['weighted_acc_all'] = float(overall_acc)
+
         for gen_val, gen_name in [(0, 'girl'), (1, 'boy')]:
             idx = np.where(arr_labels == gen_val)[0]
-            results[f"acc_{gen_name}"] = accuracy_score(arr_labels[idx], arr_preds[idx])
+            results[f"acc_{gen_name}"] = float(accuracy_score(arr_labels[idx], arr_preds[idx]))
         return overall_acc, results
 
     else:  # task == 'both'
@@ -276,7 +278,7 @@ def custom_metrics(preds, labels, task, class_weights=None):
             acc_age = weighted_accuracy(age_pred, age_arr, class_weights[0])
         else:
             acc_age = accuracy_score(age_arr, age_pred)
-        results['weighted_acc_age'] = acc_age
+        results['weighted_acc_age'] = float(acc_age)
 
         gen_arr  = np.array(labels['gender'])
         gen_pred = np.array(preds['gender'])
@@ -284,7 +286,7 @@ def custom_metrics(preds, labels, task, class_weights=None):
             acc_gen = weighted_accuracy(gen_pred, gen_arr, class_weights[1])
         else:
             acc_gen = accuracy_score(gen_arr, gen_pred)
-        results['weighted_acc_gender'] = acc_gen
+        results['weighted_acc_gender'] = float(acc_gen)
 
         overall_acc = (acc_age + acc_gen) / 2.0
         return overall_acc, results
