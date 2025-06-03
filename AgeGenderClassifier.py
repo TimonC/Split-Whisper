@@ -382,7 +382,6 @@ def train_age_gender_classifier(args):
             best_acc = overall_acc
             patience_counter = 0
             best_results = results.copy()
-            best_results["losses"] = losses.copy()
             if args.save_model:
                 os.makedirs(args.output_dir, exist_ok=True)
                 torch.save(model.state_dict(), os.path.join(args.output_dir, f"{args.task}.pt"))
@@ -391,7 +390,9 @@ def train_age_gender_classifier(args):
             if patience_counter >= args.patience:
                 print("Early stopping triggered.")
                 break
-
+        
+    
+    best_results["losses"] = losses.copy()
     with open(json_file, 'w') as jf:
         json.dump(best_results, jf, indent=2)
 
