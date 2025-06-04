@@ -287,7 +287,7 @@ def custom_metrics(preds, labels, task, class_weights):
             results[f"acc_{gen_name}"] = float(accuracy_score(gen_arr[idx], gen_pred[idx]))
 
         overall_acc = (acc_age + acc_gen) / 2.0
-        results[f"weighted_acc_all"] = overall_acc
+        results[f"weighted_acc_all"] = float(overall_acc);
         return overall_acc, results
 
 
