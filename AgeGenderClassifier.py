@@ -69,8 +69,9 @@ class BinaryCNN(nn.Module):
             nn.AdaptiveAvgPool2d((1, 1)),
             nn.Flatten(),
             nn.Linear(64, 32),
+            nn.LayerNorm(32),
             nn.ReLU(inplace=True),
-            nn.Dropout(0.5),
+            nn.Dropout(0.3),
         )
         self.age_head    = nn.Linear(32, 1)
         self.gender_head = nn.Linear(32, 1)
@@ -351,7 +352,7 @@ def train_age_gender_classifier(args):
     )
 
     model = BinaryCNN(task=args.task).to(device)
-    optimizer = torch.optim.Adam(model.parameters(), lr=args.learning_rate, weight_decay=1e-5)
+    optimizer = torch.optim.Adam(model.parameters(), lr=args.learning_rate, weight_decay=5e-4)
 
     os.makedirs(args.results_dir, exist_ok=True)
     json_file = os.path.join(args.results_dir, f"{args.task}.json")
