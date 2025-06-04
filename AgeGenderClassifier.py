@@ -240,16 +240,13 @@ def weighted_accuracy(preds, labels, class_weights):
         weighted_acc += acc * (weight / total_weight)
     return weighted_acc
 
-def custom_metrics(preds, labels, task, class_weights=None):
+def custom_metrics(preds, labels, task, class_weights):
     results = {}
 
     if task == 'age':
         arr_labels = np.array(labels['age'])
         arr_preds  = np.array(preds['age'])
-        if class_weights is not None:
-            overall_acc = weighted_accuracy(arr_preds, arr_labels, class_weights)
-        else:
-            overall_acc = accuracy_score(arr_labels, arr_preds)
+        overall_acc = weighted_accuracy(arr_preds, arr_labels, class_weights)
         results['weighted_acc_all'] = float(overall_acc)
 
         for age_val, age_name in [(0, 'younger'), (1, 'older')]:
@@ -260,10 +257,7 @@ def custom_metrics(preds, labels, task, class_weights=None):
     elif task == 'gender':
         arr_labels = np.array(labels['gender'])
         arr_preds  = np.array(preds['gender'])
-        if class_weights is not None:
-            overall_acc = weighted_accuracy(arr_preds, arr_labels, class_weights)
-        else:
-            overall_acc = accuracy_score(arr_labels, arr_preds)
+        overall_acc = weighted_accuracy(arr_preds, arr_labels, class_weights)
         results['weighted_acc_all'] = float(overall_acc)
 
         for gen_val, gen_name in [(0, 'girl'), (1, 'boy')]:
@@ -272,21 +266,25 @@ def custom_metrics(preds, labels, task, class_weights=None):
         return overall_acc, results
 
     else:  # task == 'both'
-        age_arr  = np.array(labels['age'])
-        age_pred = np.array(preds['age'])
-        if class_weights is not None:
-            acc_age = weighted_accuracy(age_pred, age_arr, class_weights[0])
-        else:
-            acc_age = accuracy_score(age_arr, age_pred)
+        age_arr   = np.array(labels['age'])
+        age_pred  = np.array(preds['age'])
+        acc_age   = weighted_accuracy(age_pred, age_arr, class_weights[0])
         results['weighted_acc_age'] = float(acc_age)
 
-        gen_arr  = np.array(labels['gender'])
-        gen_pred = np.array(preds['gender'])
-        if class_weights is not None:
-            acc_gen = weighted_accuracy(gen_pred, gen_arr, class_weights[1])
-        else:
-            acc_gen = accuracy_score(gen_arr, gen_pred)
+        gen_arr   = np.array(labels['gender'])
+        gen_pred  = np.array(preds['gender'])
+        acc_gen   = weighted_accuracy(gen_pred, gen_arr, class_weights[1])
         results['weighted_acc_gender'] = float(acc_gen)
+
+        # per-age accuracies
+        for age_val, age_name in [(0, 'younger'), (1, 'older')]:
+            idx = np.where(age_arr == age_val)[0]
+            results[f"acc_{age_name}"] = float(accuracy_score(age_arr[idx], age_pred[idx]))
+
+        # per-gender accuracies
+        for gen_val, gen_name in [(0, 'girl'), (1, 'boy')]:
+            idx = np.where(gen_arr == gen_val)[0]
+            results[f"acc_{gen_name}"] = float(accuracy_score(gen_arr[idx], gen_pred[idx]))
 
         overall_acc = (acc_age + acc_gen) / 2.0
         return overall_acc, results
