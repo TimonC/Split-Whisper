@@ -29,65 +29,75 @@ class BinaryCNN(nn.Module):
         super().__init__()
         self.task = task
 
-        # Initial conv block
-        self.initial = nn.Sequential(
-            nn.Conv2d(1, 8, kernel_size=3, padding=1, bias=False),
-            nn.BatchNorm2d(8),
-            nn.ReLU(inplace=True)
-        )
+        # Shared trunk: initial → layer1 → layer2
+        self.initial = self._conv_block(1, 8, stride=1)
+        self.layer1  = self._conv_block(8, 16, stride=2)
+        self.layer2  = self._conv_block(16, 32, stride=2)
 
-        # Three simple conv blocks (no residuals)
-        self.layer1 = self._make_layer(8, 16, stride=2)
-        self.layer2 = self._make_layer(16, 32, stride=2)
-        self.layer3 = self._make_layer(32, 64, stride=2)
+        # Separate third conv‐blocks for each head
+        self.layer3_age    = self._conv_block(32, 64, stride=2)
+        self.layer3_gender = self._conv_block(32, 64, stride=2)
 
-        # Shared fully connected head
-        self.shared_fc = nn.Sequential(
-            nn.AdaptiveAvgPool2d((1, 1)),
+        # Age head: pool → flatten → MLP → logit
+        self.age_head_fc = nn.Sequential(
+            nn.AdaptiveAvgPool2d((1,1)),
             nn.Flatten(),
             nn.Linear(64, 32),
             nn.LayerNorm(32),
             nn.ReLU(inplace=True),
             nn.Dropout(0.3),
         )
-
-        # Separate heads
         self.age_head = nn.Linear(32, 1)
+
+        # Gender head: same structure as age
+        self.gender_head_fc = nn.Sequential(
+            nn.AdaptiveAvgPool2d((1,1)),
+            nn.Flatten(),
+            nn.Linear(64, 32),
+            nn.LayerNorm(32),
+            nn.ReLU(inplace=True),
+            nn.Dropout(0.3),
+        )
         self.gender_head = nn.Linear(32, 1)
 
-    def _make_layer(self, in_c, out_c, stride=1):
+    def _conv_block(self, in_ch, out_ch, stride):
         return nn.Sequential(
-            nn.Conv2d(in_c, out_c, kernel_size=3, stride=stride, padding=1, bias=False),
-            nn.BatchNorm2d(out_c),
-            nn.ReLU(inplace=True)
+            nn.Conv2d(in_ch, out_ch, kernel_size=3, stride=stride, padding=1, bias=False),
+            nn.BatchNorm2d(out_ch),
+            nn.ReLU(inplace=True),
         )
 
-    def downsample_mask(self, mask, target_length):
-        m = mask.unsqueeze(1).float()  # (B, 1, T)
-        factor = m.size(-1) // target_length
-        if factor == 0:
-            factor = 1
+    def _downsample_mask(self, mask, tgt_len):
+        # mask: (B, T) → (B, tgt_len)
+        m = mask.unsqueeze(1).float()                          # → (B, 1, T)
+        factor = max(m.size(-1) // tgt_len, 1)
         m_ds = F.avg_pool1d(m, kernel_size=factor, stride=factor, ceil_mode=True)
-        return (m_ds > 0.5).squeeze(1)  # (B, T_out)
+        return (m_ds > 0.5).squeeze(1)                         # → (B, tgt_len)
 
     def forward(self, x, mask=None):
-        x = self.initial(x)   # (B, 8, T, F)
-        x = self.layer1(x)    # (B, 16, T//2, F//2)
-        x = self.layer2(x)    # (B, 32, T//4, F//4)
-        x = self.layer3(x)    # (B, 64, T//8, F//8)
+        # x: (B, 1, T, F), mask: (B, T) or None
+        shared = self.initial(x)
+        shared = self.layer1(shared)
+        shared = self.layer2(shared)
 
-        if mask is not None:
-            T_out = x.size(-1)
-            m = self.downsample_mask(mask, T_out)
-            m = m.unsqueeze(1).unsqueeze(2)  # (B, 1, 1, T_out)
-            x = x * m
-
-        x = self.shared_fc(x)
         outputs = {}
+
         if self.task in ('age', 'both'):
-            outputs['age'] = self.age_head(x).squeeze(1)
+            xa = self.layer3_age(shared)                        # → (B, 64, T’, F’)
+            if mask is not None:
+                m_a = self._downsample_mask(mask, xa.size(-1))  # → (B, T’)
+                xa = xa * m_a.unsqueeze(1).unsqueeze(2)         # → (B, 64, 1, T’)
+            fa = self.age_head_fc(xa)                           # → (B, 32)
+            outputs['age'] = self.age_head(fa).squeeze(1)       # → (B,)
+
         if self.task in ('gender', 'both'):
-            outputs['gender'] = self.gender_head(x).squeeze(1)
+            xg = self.layer3_gender(shared)
+            if mask is not None:
+                m_g = self._downsample_mask(mask, xg.size(-1))
+                xg = xg * m_g.unsqueeze(1).unsqueeze(2)
+            fg = self.gender_head_fc(xg)
+            outputs['gender'] = self.gender_head(fg).squeeze(1)
+
         return outputs
 
 # ===== Data loading =====
