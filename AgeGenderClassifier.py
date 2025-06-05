@@ -24,47 +24,24 @@ def set_seed(seed):
     torch.backends.cudnn.benchmark = False
 
 # ===== Model definition =====
-class ResidualBlock(nn.Module):
-    def __init__(self, in_c, out_c, stride=1):
-        super().__init__()
-        self.conv1 = nn.Conv2d(in_c, out_c, kernel_size=3, stride=stride, padding=1, bias=False)
-        self.bn1   = nn.BatchNorm2d(out_c)
-        self.relu  = nn.ReLU(inplace=True)
-        self.conv2 = nn.Conv2d(out_c, out_c, kernel_size=3, stride=1, padding=1, bias=False)
-        self.bn2   = nn.BatchNorm2d(out_c)
-
-        self.skip = nn.Identity()
-        if in_c != out_c or stride != 1:
-            self.skip = nn.Sequential(
-                nn.Conv2d(in_c, out_c, kernel_size=1, stride=stride, bias=False),
-                nn.BatchNorm2d(out_c)
-            )
-
-    def forward(self, x):
-        identity = self.skip(x)
-        out = self.conv1(x)
-        out = self.bn1(out)
-        out = self.relu(out)
-        out = self.conv2(out)
-        out = self.bn2(out)
-        out += identity
-        out = self.relu(out)
-        return out
-
 class BinaryCNN(nn.Module):
     def __init__(self, task='both'):
         super().__init__()
         self.task = task
 
+        # Initial conv block
         self.initial = nn.Sequential(
-            nn.Conv2d(1, 8, 3, padding=1, bias=False),
+            nn.Conv2d(1, 8, kernel_size=3, padding=1, bias=False),
             nn.BatchNorm2d(8),
             nn.ReLU(inplace=True)
         )
+
+        # Three simple conv blocks (no residuals)
         self.layer1 = self._make_layer(8, 16, stride=2)
         self.layer2 = self._make_layer(16, 32, stride=2)
         self.layer3 = self._make_layer(32, 64, stride=2)
 
+        # Shared fully connected head
         self.shared_fc = nn.Sequential(
             nn.AdaptiveAvgPool2d((1, 1)),
             nn.Flatten(),
@@ -73,30 +50,36 @@ class BinaryCNN(nn.Module):
             nn.ReLU(inplace=True),
             nn.Dropout(0.3),
         )
-        self.age_head    = nn.Linear(32, 1)
+
+        # Separate heads
+        self.age_head = nn.Linear(32, 1)
         self.gender_head = nn.Linear(32, 1)
 
     def _make_layer(self, in_c, out_c, stride=1):
-        return ResidualBlock(in_c, out_c, stride=stride)
+        return nn.Sequential(
+            nn.Conv2d(in_c, out_c, kernel_size=3, stride=stride, padding=1, bias=False),
+            nn.BatchNorm2d(out_c),
+            nn.ReLU(inplace=True)
+        )
 
     def downsample_mask(self, mask, target_length):
-        m = mask.unsqueeze(1).float()
+        m = mask.unsqueeze(1).float()  # (B, 1, T)
         factor = m.size(-1) // target_length
         if factor == 0:
             factor = 1
         m_ds = F.avg_pool1d(m, kernel_size=factor, stride=factor, ceil_mode=True)
-        return (m_ds > 0.5).squeeze(1)
+        return (m_ds > 0.5).squeeze(1)  # (B, T_out)
 
     def forward(self, x, mask=None):
-        x = self.initial(x)
-        x = self.layer1(x)
-        x = self.layer2(x)
-        x = self.layer3(x)
+        x = self.initial(x)   # (B, 8, T, F)
+        x = self.layer1(x)    # (B, 16, T//2, F//2)
+        x = self.layer2(x)    # (B, 32, T//4, F//4)
+        x = self.layer3(x)    # (B, 64, T//8, F//8)
 
         if mask is not None:
             T_out = x.size(-1)
             m = self.downsample_mask(mask, T_out)
-            m = m.unsqueeze(1).unsqueeze(2)
+            m = m.unsqueeze(1).unsqueeze(2)  # (B, 1, 1, T_out)
             x = x * m
 
         x = self.shared_fc(x)
