@@ -23,24 +23,60 @@ def set_seed(seed):
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
 
-# ===== Model definition =====
-class BinaryCNN(nn.Module):
+# ===== CNN for binary classification with an age head and a gender head =====
+class ResBlock(nn.Module):
+    def __init__(self, in_ch, out_ch, stride=1):
+        super().__init__()
+        self.conv1 = nn.Conv2d(in_ch, out_ch, kernel_size=3, stride=stride, padding=1, bias=False)
+        self.bn1 = nn.BatchNorm2d(out_ch)
+        self.relu = nn.ReLU(inplace=True)
+        self.conv2 = nn.Conv2d(out_ch, out_ch, kernel_size=3, stride=1, padding=1, bias=False)
+        self.bn2 = nn.BatchNorm2d(out_ch)
+
+        self.downsample = None
+        if stride != 1 or in_ch != out_ch:
+            self.downsample = nn.Sequential(
+                nn.Conv2d(in_ch, out_ch, kernel_size=1, stride=stride, bias=False),
+                nn.BatchNorm2d(out_ch),
+            )
+
+    def forward(self, x):
+        identity = x
+        out = self.conv1(x)
+        out = self.bn1(out)
+        out = self.relu(out)
+        out = self.conv2(out)
+        out = self.bn2(out)
+
+        if self.downsample is not None:
+            identity = self.downsample(x)
+
+        out += identity
+        out = self.relu(out)
+        return out
+
+
+class BinaryResNet(nn.Module):
     def __init__(self, task='both'):
         super().__init__()
         self.task = task
 
-        # Shared trunk: initial → layer1 → layer2
-        self.initial = self._conv_block(1, 8, stride=1)
-        self.layer1  = self._conv_block(8, 16, stride=2)
-        self.layer2  = self._conv_block(16, 32, stride=2)
+        # Shared trunk: initial conv + 2 residual blocks
+        self.initial = nn.Sequential(
+            nn.Conv2d(1, 8, kernel_size=3, stride=1, padding=1, bias=False),
+            nn.BatchNorm2d(8),
+            nn.ReLU(inplace=True),
+        )
+        self.layer1 = ResBlock(8, 16, stride=2)
+        self.layer2 = ResBlock(16, 32, stride=2)
 
-        # Separate third conv‐blocks for each head
-        self.layer3_age    = self._conv_block(32, 64, stride=2)
-        self.layer3_gender = self._conv_block(32, 64, stride=2)
+        # Separate third residual blocks for each head
+        self.layer3_age = ResBlock(32, 64, stride=2)
+        self.layer3_gender = ResBlock(32, 64, stride=2)
 
-        # Age head: pool → flatten → MLP → logit
+        # Age head: adaptive pooling → flatten → MLP → output
         self.age_head_fc = nn.Sequential(
-            nn.AdaptiveAvgPool2d((1,1)),
+            nn.AdaptiveAvgPool2d((1, 1)),
             nn.Flatten(),
             nn.Linear(64, 32),
             nn.LayerNorm(32),
@@ -51,7 +87,7 @@ class BinaryCNN(nn.Module):
 
         # Gender head: same structure as age
         self.gender_head_fc = nn.Sequential(
-            nn.AdaptiveAvgPool2d((1,1)),
+            nn.AdaptiveAvgPool2d((1, 1)),
             nn.Flatten(),
             nn.Linear(64, 32),
             nn.LayerNorm(32),
@@ -59,13 +95,6 @@ class BinaryCNN(nn.Module):
             nn.Dropout(0.3),
         )
         self.gender_head = nn.Linear(32, 1)
-
-    def _conv_block(self, in_ch, out_ch, stride):
-        return nn.Sequential(
-            nn.Conv2d(in_ch, out_ch, kernel_size=3, stride=stride, padding=1, bias=False),
-            nn.BatchNorm2d(out_ch),
-            nn.ReLU(inplace=True),
-        )
 
     def _downsample_mask(self, mask, tgt_len):
         # mask: (B, T) → (B, tgt_len)
@@ -83,20 +112,20 @@ class BinaryCNN(nn.Module):
         outputs = {}
 
         if self.task in ('age', 'both'):
-            xa = self.layer3_age(shared)                        # → (B, 64, T’, F’)
+            xa = self.layer3_age(shared)                         # (B, 64, T’, F’)
             if mask is not None:
-                m_a = self._downsample_mask(mask, xa.size(-1))  # → (B, T’)
-                xa = xa * m_a.unsqueeze(1).unsqueeze(2)         # → (B, 64, 1, T’)
-            fa = self.age_head_fc(xa)                           # → (B, 32)
-            outputs['age'] = self.age_head(fa).squeeze(1)       # → (B,)
+                m_a = self._downsample_mask(mask, xa.size(-1))  # (B, T’)
+                xa = xa * m_a.unsqueeze(1).unsqueeze(2)         # broadcast mask on channels and freq dim
+            fa = self.age_head_fc(xa)                            # (B, 32)
+            outputs['age'] = self.age_head(fa).squeeze(1)       # (B,)
 
         if self.task in ('gender', 'both'):
-            xg = self.layer3_gender(shared)
+            xg = self.layer3_gender(shared)                      # (B, 64, T’, F’)
             if mask is not None:
-                m_g = self._downsample_mask(mask, xg.size(-1))
-                xg = xg * m_g.unsqueeze(1).unsqueeze(2)
-            fg = self.gender_head_fc(xg)
-            outputs['gender'] = self.gender_head(fg).squeeze(1)
+                m_g = self._downsample_mask(mask, xg.size(-1))  # (B, T’)
+                xg = xg * m_g.unsqueeze(1).unsqueeze(2)         # broadcast mask on channels and freq dim
+            fg = self.gender_head_fc(xg)                         # (B, 32)
+            outputs['gender'] = self.gender_head(fg).squeeze(1)# (B,)
 
         return outputs
 
@@ -292,7 +321,7 @@ def compute_class_weights_from_counts(counts, num_classes):
         weights[i] = counts.get(i, 0) / total
     return weights
 
-# ===== Single-run training function =====
+# ===== Train loop =====
 def train_age_gender_classifier(args):
     train_ds, dev_ds = combine_datasets(args.dataset_path)
     for d in (train_ds, dev_ds):
@@ -344,7 +373,7 @@ def train_age_gender_classifier(args):
         pin_memory=True
     )
 
-    model = BinaryCNN(task=args.task).to(device)
+    model = BinaryResNet(task=args.task).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.learning_rate, weight_decay=5e-4)
 
     os.makedirs(args.results_dir, exist_ok=True)
@@ -441,7 +470,7 @@ def main():
         aggregated['losses_first_run'] = single_run_losses
 
     # Save aggregated results
-    agg_file = os.path.join(args.results_dir, f"{args.task}_aggregated_{args.num_runs}runs.json")
+    agg_file = os.path.join(args.results_dir, f"{args.task}_res_{args.num_runs}runs.json")
     os.makedirs(args.results_dir, exist_ok=True)
     with open(agg_file, 'w') as af:
         json.dump(aggregated, af, indent=2)
